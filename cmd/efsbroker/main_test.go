@@ -200,9 +200,9 @@ var _ = Describe("Efsbroker Main", func() {
 
 				Expect(catalog.Services[0].Name).To(Equal("something"))
 				Expect(catalog.Services[0].ID).To(Equal("someguid"))
-				Expect(catalog.Services[0].Plans[0].ID).To(Equal("some other guid"))
-				Expect(catalog.Services[0].Plans[0].Name).To(Equal("some name"))
-				Expect(catalog.Services[0].Plans[0].Description).To(Equal("a description"))
+				Expect(catalog.Services[0].Plans[0].ID).To(Equal("generalPurpose"))
+				Expect(catalog.Services[0].Plans[0].Name).To(Equal("generalPurpose"))
+				Expect(catalog.Services[0].Plans[0].Description).To(Equal("recommended for most file systems"))
 			})
 		})
 	})

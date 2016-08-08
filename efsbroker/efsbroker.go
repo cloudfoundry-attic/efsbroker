@@ -4,17 +4,7 @@ import (
 	"errors"
 	"reflect"
 
-	"path"
-
-	"encoding/json"
-
-	"fmt"
-
-	"path/filepath"
-
 	"sync"
-
-	"os"
 
 	"code.cloudfoundry.org/lager"
 	"code.cloudfoundry.org/voldriver"
@@ -23,7 +13,7 @@ import (
 
 const (
 	PermissionVolumeMount = brokerapi.RequiredPermission("volume_mount")
-	DefaultContainerPath  = "/var/vcap/data"
+	//DefaultContainerPath  = "/var/vcap/data"
 )
 
 type staticState struct {
@@ -62,10 +52,10 @@ func New(
 ) *broker {
 
 	theBroker := broker{
-		logger:      logger,
-		dataDir:     dataDir,
-		fs:          fileSystem,
-		mutex:       &sync.Mutex{},
+		logger:  logger,
+		dataDir: dataDir,
+		fs:      fileSystem,
+		mutex:   &sync.Mutex{},
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -98,10 +88,19 @@ func (b *broker) Services() []brokerapi.Service {
 		Tags:          []string{"efs"},
 		Requires:      []brokerapi.RequiredPermission{PermissionVolumeMount},
 
-		Plans: []brokerapi.ServicePlan{{
+		Plans: []brokerapi.ServicePlan{/*{
 			Name:        b.static.PlanName,
 			ID:          b.static.PlanId,
 			Description: b.static.PlanDesc,
+		},*/
+			{
+		  Name: "generalPurpose",
+			ID: "generalPurpose",
+			Description: "recommended for most file systems",
+		},{
+			Name: "maxIO",
+			ID: "maxIO",
+			Description: "scales to higher levels of aggregate throughput and operations per second with a tradeoff of slightly higher latencies for most file operations",
 		}},
 	}}
 }
@@ -116,25 +115,7 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	defer b.serialize(b.dynamic)
 
-	if b.instanceConflicts(details, instanceID) {
-		logger.Error("instance-already-exists", brokerapi.ErrInstanceAlreadyExists)
-		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
-	}
-
-	errResp := b.provisioner.Create(logger, voldriver.CreateRequest{
-		Name: instanceID,
-		Opts: map[string]interface{}{"volume_id": instanceID},
-	})
-
-	if errResp.Err != "" {
-		err := errors.New(errResp.Err)
-		logger.Error("provisioner-create-failed", err)
-		return brokerapi.ProvisionedServiceSpec{}, err
-	}
-
-	b.dynamic.InstanceMap[instanceID] = details
-
-	return brokerapi.ProvisionedServiceSpec{}, nil
+	return brokerapi.ProvisionedServiceSpec{}, errors.New("unimplemented")
 }
 
 func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
@@ -147,23 +128,7 @@ func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 
 	defer b.serialize(b.dynamic)
 
-	if _, ok := b.dynamic.InstanceMap[instanceID]; !ok {
-		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
-	}
-
-	errResp := b.provisioner.Remove(logger, voldriver.RemoveRequest{
-		Name: instanceID,
-	})
-
-	if errResp.Err != "" {
-		err := errors.New(errResp.Err)
-		logger.Error("provisioner-remove-failed", err)
-		return brokerapi.DeprovisionServiceSpec{}, err
-	}
-
-	delete(b.dynamic.InstanceMap, instanceID)
-
-	return brokerapi.DeprovisionServiceSpec{}, nil
+	return brokerapi.DeprovisionServiceSpec{}, errors.New("unimplemented")
 }
 
 func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
@@ -189,17 +154,7 @@ func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.U
 
 	defer b.serialize(b.dynamic)
 
-	if _, ok := b.dynamic.InstanceMap[instanceID]; !ok {
-		return brokerapi.ErrInstanceDoesNotExist
-	}
-
-	if _, ok := b.dynamic.BindingMap[bindingID]; !ok {
-		return brokerapi.ErrBindingDoesNotExist
-	}
-
-	delete(b.dynamic.BindingMap, bindingID)
-
-	return nil
+	return errors.New("unimplemented")
 }
 
 func (b *broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
@@ -219,25 +174,25 @@ func (b *broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceI
 	return false
 }
 
-func evaluateContainerPath(parameters map[string]interface{}, volId string) string {
-	if containerPath, ok := parameters["mount"]; ok && containerPath != "" {
-		return containerPath.(string)
-	}
-
-	return path.Join(DefaultContainerPath, volId)
-}
-
-func evaluateMode(parameters map[string]interface{}) (string, error) {
-	if ro, ok := parameters["readonly"]; ok {
-		switch ro := ro.(type) {
-		case bool:
-			return readOnlyToMode(ro), nil
-		default:
-			return "", brokerapi.ErrRawParamsInvalid
-		}
-	}
-	return "rw", nil
-}
+//func evaluateContainerPath(parameters map[string]interface{}, volId string) string {
+//	if containerPath, ok := parameters["mount"]; ok && containerPath != "" {
+//		return containerPath.(string)
+//	}
+//
+//	return path.Join(DefaultContainerPath, volId)
+//}
+//
+//func evaluateMode(parameters map[string]interface{}) (string, error) {
+//	if ro, ok := parameters["readonly"]; ok {
+//		switch ro := ro.(type) {
+//		case bool:
+//			return readOnlyToMode(ro), nil
+//		default:
+//			return "", brokerapi.ErrRawParamsInvalid
+//		}
+//	}
+//	return "rw", nil
+//}
 
 func readOnlyToMode(ro bool) string {
 	if ro {
@@ -260,21 +215,21 @@ func (b *broker) serialize(state interface{}) {
 	logger.Info("start")
 	defer logger.Info("end")
 
-	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
+	//stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
+	//
+	//stateData, err := json.Marshal(state)
+	//if err != nil {
+	//	b.logger.Error("failed-to-marshall-state", err)
+	//	return
+	//}
 
-	stateData, err := json.Marshal(state)
-	if err != nil {
-		b.logger.Error("failed-to-marshall-state", err)
-		return
-	}
+	//err = b.fs.WriteFile(stateFile, stateData, os.ModePerm)
+	//if err != nil {
+	//	b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
+	//	return
+	//}
 
-	err = b.fs.WriteFile(stateFile, stateData, os.ModePerm)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
-		return
-	}
-
-	logger.Info("state-saved", lager.Data{"state-file": stateFile})
+	//logger.Info("state-saved", lager.Data{"state-file": stateFile})
 }
 
 func (b *broker) restoreDynamicState() {
@@ -282,20 +237,20 @@ func (b *broker) restoreDynamicState() {
 	logger.Info("start")
 	defer logger.Info("end")
 
-	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-
-	serviceData, err := b.fs.ReadFile(stateFile)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
-		return
-	}
+	//stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
+	//
+	//serviceData, err := b.fs.ReadFile(stateFile)
+	//if err != nil {
+	//	b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
+	//	return
+	//}
 
 	dynamicState := dynamicState{}
-	err = json.Unmarshal(serviceData, &dynamicState)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
-		return
-	}
-	logger.Info("state-restored", lager.Data{"state-file": stateFile})
+	//err = json.Unmarshal(serviceData, &dynamicState)
+	//if err != nil {
+	//	b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
+	//	return
+	//}
+	//logger.Info("state-restored", lager.Data{"state-file": stateFile})
 	b.dynamic = dynamicState
 }

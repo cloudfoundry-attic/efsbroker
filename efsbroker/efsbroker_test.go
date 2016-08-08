@@ -14,10 +14,9 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
-	"code.cloudfoundry.org/efsbroker/efsbroker/localbrokerfakes"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"code.cloudfoundry.org/localbroker/localbroker/efsbrokerfakes"
+	"code.cloudfoundry.org/efsbroker/efsbroker/efsbrokerfakes"
 )
 
 type dynamicState struct {

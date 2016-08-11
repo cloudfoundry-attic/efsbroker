@@ -1,13 +1,19 @@
 package efsbroker
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 
 	"sync"
 
+	"code.cloudfoundry.org/efsbroker/efsdriver"
 	"code.cloudfoundry.org/lager"
-	"code.cloudfoundry.org/voldriver"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
 )
 
@@ -24,8 +30,13 @@ type staticState struct {
 	PlanDesc    string `json:"PlanDesc"`
 }
 
+type EFSInstance struct {
+	brokerapi.ProvisionDetails
+	efsID string
+}
+
 type dynamicState struct {
-	InstanceMap map[string]brokerapi.ProvisionDetails
+	InstanceMap map[string]EFSInstance
 	BindingMap  map[string]brokerapi.BindDetails
 }
 
@@ -36,7 +47,7 @@ type lock interface {
 
 type broker struct {
 	logger      lager.Logger
-	provisioner voldriver.Provisioner
+	provisioner efsdriver.EFSProvisioner
 	dataDir     string
 	fs          FileSystem
 	mutex       lock
@@ -49,13 +60,15 @@ func New(
 	logger lager.Logger,
 	serviceName, serviceId, planName, planId, planDesc, dataDir string,
 	fileSystem FileSystem,
+	provisioner efsdriver.EFSProvisioner,
 ) *broker {
 
 	theBroker := broker{
-		logger:  logger,
-		dataDir: dataDir,
-		fs:      fileSystem,
-		mutex:   &sync.Mutex{},
+		logger:      logger,
+		dataDir:     dataDir,
+		fs:          fileSystem,
+		provisioner: provisioner,
+		mutex:       &sync.Mutex{},
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -64,12 +77,12 @@ func New(
 			PlanDesc:    planDesc,
 		},
 		dynamic: dynamicState{
-			InstanceMap: map[string]brokerapi.ProvisionDetails{},
+			InstanceMap: map[string]EFSInstance{},
 			BindingMap:  map[string]brokerapi.BindDetails{},
 		},
 	}
 
-	theBroker.restoreDynamicState()
+	// theBroker.restoreDynamicState()
 
 	return &theBroker
 }
@@ -88,20 +101,20 @@ func (b *broker) Services() []brokerapi.Service {
 		Tags:          []string{"efs"},
 		Requires:      []brokerapi.RequiredPermission{PermissionVolumeMount},
 
-		Plans: []brokerapi.ServicePlan{/*{
-			Name:        b.static.PlanName,
-			ID:          b.static.PlanId,
-			Description: b.static.PlanDesc,
-		},*/
+		Plans: []brokerapi.ServicePlan{ /*{
+				Name:        b.static.PlanName,
+				ID:          b.static.PlanId,
+				Description: b.static.PlanDesc,
+			},*/
 			{
-		  Name: "generalPurpose",
-			ID: "generalPurpose",
-			Description: "recommended for most file systems",
-		},{
-			Name: "maxIO",
-			ID: "maxIO",
-			Description: "scales to higher levels of aggregate throughput and operations per second with a tradeoff of slightly higher latencies for most file operations",
-		}},
+				Name:        "generalPurpose",
+				ID:          "generalPurpose",
+				Description: "recommended for most file systems",
+			}, {
+				Name:        "maxIO",
+				ID:          "maxIO",
+				Description: "scales to higher levels of aggregate throughput and operations per second with a tradeoff of slightly higher latencies for most file operations",
+			}},
 	}}
 }
 
@@ -113,9 +126,24 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	defer b.serialize(b.dynamic)
+	defer b.persist(b.dynamic)
 
-	return brokerapi.ProvisionedServiceSpec{}, errors.New("unimplemented")
+	if b.instanceConflicts(details, instanceID) {
+		logger.Error("instance-already-exists", brokerapi.ErrInstanceAlreadyExists)
+		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
+	}
+
+	fsDescriptor, err := b.provisioner.CreateFileSystem(&efs.CreateFileSystemInput{
+		CreationToken:   aws.String(instanceID),
+		PerformanceMode: aws.String(efs.PerformanceModeGeneralPurpose),
+	})
+	if err != nil {
+		return brokerapi.ProvisionedServiceSpec{}, err
+	}
+
+	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId}
+
+	return brokerapi.ProvisionedServiceSpec{}, nil
 }
 
 func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
@@ -126,9 +154,23 @@ func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	defer b.serialize(b.dynamic)
+	defer b.persist(b.dynamic)
 
-	return brokerapi.DeprovisionServiceSpec{}, errors.New("unimplemented")
+	instance, instanceExists := b.dynamic.InstanceMap[instanceID]
+	if !instanceExists {
+		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
+	}
+
+	_, err := b.provisioner.DeleteFileSystem(&efs.DeleteFileSystemInput{
+		FileSystemId: aws.String(instance.efsID),
+	})
+	if err != nil {
+		return brokerapi.DeprovisionServiceSpec{}, err
+	}
+
+	delete(b.dynamic.InstanceMap, instanceID)
+
+	return brokerapi.DeprovisionServiceSpec{}, nil
 }
 
 func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
@@ -139,7 +181,7 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	defer b.serialize(b.dynamic)
+	defer b.persist(b.dynamic)
 
 	return brokerapi.Binding{}, errors.New("unimplemented")
 }
@@ -152,7 +194,7 @@ func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.U
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	defer b.serialize(b.dynamic)
+	defer b.persist(b.dynamic)
 
 	return errors.New("unimplemented")
 }
@@ -210,47 +252,47 @@ func (b *broker) bindingConflicts(bindingID string, details brokerapi.BindDetail
 	return false
 }
 
-func (b *broker) serialize(state interface{}) {
+func (b *broker) persist(state interface{}) {
 	logger := b.logger.Session("serialize-state")
 	logger.Info("start")
 	defer logger.Info("end")
 
-	//stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-	//
-	//stateData, err := json.Marshal(state)
-	//if err != nil {
-	//	b.logger.Error("failed-to-marshall-state", err)
-	//	return
-	//}
+	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
 
-	//err = b.fs.WriteFile(stateFile, stateData, os.ModePerm)
-	//if err != nil {
-	//	b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
-	//	return
-	//}
+	stateData, err := json.Marshal(state)
+	if err != nil {
+		b.logger.Error("failed-to-marshall-state", err)
+		return
+	}
 
-	//logger.Info("state-saved", lager.Data{"state-file": stateFile})
+	err = b.fs.WriteFile(stateFile, stateData, os.ModePerm)
+	if err != nil {
+		b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
+		return
+	}
+
+	logger.Info("state-saved", lager.Data{"state-file": stateFile})
 }
 
-func (b *broker) restoreDynamicState() {
-	logger := b.logger.Session("restore-services")
-	logger.Info("start")
-	defer logger.Info("end")
+// func (b *broker) restoreDynamicState() {
+//	logger := b.logger.Session("restore-services")
+//	logger.Info("start")
+//	defer logger.Info("end")
 
-	//stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-	//
-	//serviceData, err := b.fs.ReadFile(stateFile)
-	//if err != nil {
-	//	b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
-	//	return
-	//}
+//stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
+//
+//serviceData, err := b.fs.ReadFile(stateFile)
+//if err != nil {
+//	b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
+//	return
+//}
 
-	dynamicState := dynamicState{}
-	//err = json.Unmarshal(serviceData, &dynamicState)
-	//if err != nil {
-	//	b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
-	//	return
-	//}
-	//logger.Info("state-restored", lager.Data{"state-file": stateFile})
-	b.dynamic = dynamicState
-}
+// dynamicState := dynamicState{}
+//err = json.Unmarshal(serviceData, &dynamicState)
+//if err != nil {
+//	b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
+//	return
+//}
+//logger.Info("state-restored", lager.Data{"state-file": stateFile})
+// b.dynamic = dynamicState
+// }

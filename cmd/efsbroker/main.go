@@ -10,9 +10,12 @@ import (
 
 	"os"
 
-	"code.cloudfoundry.org/lager"
-  "code.cloudfoundry.org/efsbroker/efsbroker"
+	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/utils"
+	"code.cloudfoundry.org/lager"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
@@ -100,8 +103,19 @@ func parseCommandLine() {
 }
 
 func createServer(logger lager.Logger) ifrit.Runner {
+	session, err := session.NewSession()
+	if err != nil {
+		panic(err)
+	}
+
+	config := aws.NewConfig()
+	config.Region = aws.String("us-west-2")
+
+	efsClient := efs.New(session, config)
+
 	fileSystem := efsbroker.NewRealFileSystem()
-	serviceBroker := efsbroker.New(logger, *serviceName, *serviceId, *planName, *planId, *planDesc, *dataDir, &fileSystem)
+
+	serviceBroker := efsbroker.New(logger, *serviceName, *serviceId, *planName, *planId, *planDesc, *dataDir, &fileSystem, efsClient)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

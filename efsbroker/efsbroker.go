@@ -47,7 +47,7 @@ type lock interface {
 
 type broker struct {
 	logger      lager.Logger
-	provisioner efsdriver.EFSProvisioner
+	provisioner efsdriver.EFSService
 	dataDir     string
 	fs          FileSystem
 	mutex       lock
@@ -60,7 +60,7 @@ func New(
 	logger lager.Logger,
 	serviceName, serviceId, planName, planId, planDesc, dataDir string,
 	fileSystem FileSystem,
-	provisioner efsdriver.EFSProvisioner,
+	provisioner efsdriver.EFSService,
 ) *broker {
 
 	theBroker := broker{
@@ -128,6 +128,10 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	defer b.persist(b.dynamic)
 
+	if !asyncAllowed {
+		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrAsyncRequired
+	}
+
 	if b.instanceConflicts(details, instanceID) {
 		logger.Error("instance-already-exists", brokerapi.ErrInstanceAlreadyExists)
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
@@ -143,7 +147,7 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId}
 
-	return brokerapi.ProvisionedServiceSpec{}, nil
+	return brokerapi.ProvisionedServiceSpec{IsAsync: true}, nil
 }
 
 func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
@@ -155,6 +159,10 @@ func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	defer b.mutex.Unlock()
 
 	defer b.persist(b.dynamic)
+
+	if !asyncAllowed {
+		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrAsyncRequired
+	}
 
 	instance, instanceExists := b.dynamic.InstanceMap[instanceID]
 	if !instanceExists {
@@ -204,7 +212,33 @@ func (b *broker) Update(instanceID string, details brokerapi.UpdateDetails, asyn
 }
 
 func (b *broker) LastOperation(instanceID string, operationData string) (brokerapi.LastOperation, error) {
-	panic("not implemented")
+	instance, instanceExists := b.dynamic.InstanceMap[instanceID]
+	if !instanceExists {
+		return brokerapi.LastOperation{State: brokerapi.Failed}, brokerapi.ErrInstanceDoesNotExist
+	}
+
+	output, err := b.provisioner.DescribeFileSystems(&efs.DescribeFileSystemsInput{
+		FileSystemId: aws.String(instance.efsID),
+	})
+	if err != nil {
+		return brokerapi.LastOperation{}, err
+	}
+	if len(output.FileSystems) != 1 {
+		return brokerapi.LastOperation{State: brokerapi.Failed}, errors.New("invalid response from AWS")
+	}
+
+	return awsStateToLastOperation(output.FileSystems[0].LifeCycleState), nil
+}
+
+func awsStateToLastOperation(state *string) brokerapi.LastOperation {
+	switch *state {
+	case efs.LifeCycleStateCreating:
+		return brokerapi.LastOperation{State: brokerapi.InProgress}
+	case efs.LifeCycleStateAvailable:
+		return brokerapi.LastOperation{State: brokerapi.Succeeded}
+	default:
+		return brokerapi.LastOperation{State: brokerapi.Failed}
+	}
 }
 
 func (b *broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceID string) bool {

@@ -27,7 +27,7 @@ var _ = Describe("Broker", func() {
 	var (
 		broker             brokerapi.ServiceBroker
 		fakeFs             *efsbrokerfakes.FakeFileSystem
-		fakeEFSProvisioner *efsdriverfakes.FakeEFSProvisioner
+		fakeEFSService     *efsdriverfakes.FakeEFSService
 		logger             lager.Logger
 		WriteFileCallCount int
 		WriteFileWrote     string
@@ -36,13 +36,12 @@ var _ = Describe("Broker", func() {
 	BeforeEach(func() {
 		logger = lagertest.NewTestLogger("test-broker")
 		fakeFs = &efsbrokerfakes.FakeFileSystem{}
-		fakeEFSProvisioner = &efsdriverfakes.FakeEFSProvisioner{}
+		fakeEFSService = &efsdriverfakes.FakeEFSService{}
 		fakeFs.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
 			WriteFileCallCount++
 			WriteFileWrote = string(data)
 			return nil
 		}
-
 	})
 
 	//Context("when recreating", func() {
@@ -96,9 +95,9 @@ var _ = Describe("Broker", func() {
 				"service-name", "service-id",
 				"plan-name", "plan-id", "plan-desc", "/fake-dir",
 				fakeFs,
-				fakeEFSProvisioner,
+				fakeEFSService,
 			)
-			fakeEFSProvisioner.CreateFileSystemReturns(&efs.FileSystemDescription{FileSystemId: aws.String("fakeFS")}, nil)
+			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{FileSystemId: aws.String("fakeFS")}, nil)
 		})
 
 		Context(".Services", func() {
@@ -123,23 +122,31 @@ var _ = Describe("Broker", func() {
 
 		Context(".Provision", func() {
 			It("should provision the service instance", func() {
-				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+				spec, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeEFSProvisioner.CreateFileSystemCallCount()).To(Equal(1))
+				Expect(fakeEFSService.CreateFileSystemCallCount()).To(Equal(1))
+				Expect(spec.IsAsync).To(Equal(true))
 
-				input := fakeEFSProvisioner.CreateFileSystemArgsForCall(0)
+				input := fakeEFSService.CreateFileSystemArgsForCall(0)
 				Expect(*input.PerformanceMode).To(Equal("generalPurpose"))
 				Expect(*input.CreationToken).To(Equal("some-instance-id"))
 			})
 
 			Context("when provisioning errors", func() {
 				BeforeEach(func() {
-					fakeEFSProvisioner.CreateFileSystemReturns(nil, errors.New("badness"))
+					fakeEFSService.CreateFileSystemReturns(nil, errors.New("badness"))
 				})
 
 				It("errors", func() {
-					_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+					_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 					Expect(err).To(HaveOccurred())
+				})
+			})
+
+			Context("when the client doesnt support async", func() {
+				It("errors", func() {
+					_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+					Expect(err).To(Equal(brokerapi.ErrAsyncRequired))
 				})
 			})
 
@@ -154,13 +161,13 @@ var _ = Describe("Broker", func() {
 						OrganizationGUID: "org-guid",
 						SpaceGUID:        "space-guid",
 					}
-					_, err := broker.Provision("some-instance-id", details, false)
+					_, err := broker.Provision("some-instance-id", details, true)
 					Expect(err).NotTo(HaveOccurred())
 				})
 
 				It("should error", func() {
 					details.ServiceID = "different-service-id"
-					_, err := broker.Provision("some-instance-id", details, false)
+					_, err := broker.Provision("some-instance-id", details, true)
 					Expect(err).To(Equal(brokerapi.ErrInstanceAlreadyExists))
 				})
 			})
@@ -168,7 +175,7 @@ var _ = Describe("Broker", func() {
 			It("should write state", func() {
 				WriteFileCallCount = 0
 				WriteFileWrote = ""
-				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(WriteFileCallCount).To(Equal(1))
 				Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{\"some-instance-id\":{\"service_id\":\"\",\"plan_id\":\"\",\"organization_guid\":\"\",\"space_guid\":\"\"}},\"BindingMap\":{}}"))
@@ -177,44 +184,121 @@ var _ = Describe("Broker", func() {
 
 		Context(".Deprovision", func() {
 			BeforeEach(func() {
-				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should deprovision the service", func() {
-				_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, false)
+				_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, true)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(fakeEFSProvisioner.DeleteFileSystemCallCount()).To(Equal(1))
+				Expect(fakeEFSService.DeleteFileSystemCallCount()).To(Equal(1))
 
 				By("checking that we can reprovision a slightly different service")
-				_, err = broker.Provision("some-instance-id", brokerapi.ProvisionDetails{ServiceID: "different-service-id"}, false)
+				_, err = broker.Provision("some-instance-id", brokerapi.ProvisionDetails{ServiceID: "different-service-id"}, true)
 				Expect(err).NotTo(Equal(brokerapi.ErrInstanceAlreadyExists))
 			})
 
 			It("errors when the service instance does not exist", func() {
-				_, err := broker.Deprovision("some-nonexistant-instance-id", brokerapi.DeprovisionDetails{}, false)
+				_, err := broker.Deprovision("some-nonexistant-instance-id", brokerapi.DeprovisionDetails{}, true)
 				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 			})
 
 			Context("when the provisioner fails to remove", func() {
 				BeforeEach(func() {
-					fakeEFSProvisioner.DeleteFileSystemReturns(nil, errors.New("generic aws error"))
+					fakeEFSService.DeleteFileSystemReturns(nil, errors.New("generic aws error"))
 				})
 
 				It("should error", func() {
-					_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, false)
+					_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, true)
 					Expect(err).To(HaveOccurred())
+				})
+			})
+
+			Context("when the client doesnt support async", func() {
+				It("should error", func() {
+					_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, false)
+					Expect(err).To(Equal(brokerapi.ErrAsyncRequired))
 				})
 			})
 
 			It("should write state", func() {
 				WriteFileCallCount = 0
 				WriteFileWrote = ""
-				_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, false)
+				_, err := broker.Deprovision("some-instance-id", brokerapi.DeprovisionDetails{}, true)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(WriteFileCallCount).To(Equal(1))
 				Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{},\"BindingMap\":{}}"))
+			})
+		})
+
+		Context(".LastOperation", func() {
+			BeforeEach(func() {
+				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			Context("while aws reports the fs is creating", func() {
+				BeforeEach(func() {
+					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+						FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateCreating)}},
+					}, nil)
+				})
+
+				It("returns in progress", func() {
+					op, err := broker.LastOperation("some-instance-id", "")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(op.State).To(Equal(brokerapi.InProgress))
+				})
+			})
+
+			Context("while aws reports the fs is available", func() {
+				BeforeEach(func() {
+					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+						FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateAvailable)}},
+					}, nil)
+				})
+
+				It("returns successful", func() {
+					op, err := broker.LastOperation("some-instance-id", "")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(op.State).To(Equal(brokerapi.Succeeded))
+				})
+			})
+
+			Context("when calling out to aws fails ", func() {
+				BeforeEach(func() {
+					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{}, errors.New("badness"))
+				})
+
+				It("errors", func() {
+					_, err := broker.LastOperation("some-instance-id", "")
+					Expect(err).To(Equal(errors.New("badness")))
+				})
+			})
+
+			Context("when calling out to aws returns too many file systems", func() {
+				BeforeEach(func() {
+					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+						FileSystems: []*efs.FileSystemDescription{
+							{LifeCycleState: aws.String(efs.LifeCycleStateAvailable)},
+							{LifeCycleState: aws.String(efs.LifeCycleStateAvailable)},
+						},
+					}, nil)
+				})
+
+				It("errors", func() {
+					_, err := broker.LastOperation("some-instance-id", "")
+					Expect(err).To(HaveOccurred())
+				})
+			})
+
+			Context("when the instance doesn't exist", func() {
+				It("errors", func() {
+					state, err := broker.LastOperation("nonexistant", "")
+					Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
+					Expect(state).To(Equal(brokerapi.LastOperation{State: brokerapi.Failed}))
+				})
 			})
 		})
 		//
@@ -222,7 +306,7 @@ var _ = Describe("Broker", func() {
 		//	var bindDetails brokerapi.BindDetails
 		//
 		//	BeforeEach(func() {
-		//		_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+		//		_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 		//		Expect(err).NotTo(HaveOccurred())
 		//
 		//		bindDetails = brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}}
@@ -322,7 +406,7 @@ var _ = Describe("Broker", func() {
 		//
 		//Context(".Unbind", func() {
 		//	BeforeEach(func() {
-		//		_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, false)
+		//		_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 		//		Expect(err).NotTo(HaveOccurred())
 		//
 		//		_, err = broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
@@ -366,7 +450,7 @@ var _ = Describe("Broker", func() {
 		//
 		//			broker.Services()
 		//
-		//			_, err := broker.Provision(uniqueName, brokerapi.ProvisionDetails{}, false)
+		//			_, err := broker.Provision(uniqueName, brokerapi.ProvisionDetails{}, true)
 		//			Expect(err).NotTo(HaveOccurred())
 		//
 		//			_, err = broker.Bind(uniqueName, "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
@@ -375,7 +459,7 @@ var _ = Describe("Broker", func() {
 		//			err = broker.Unbind(uniqueName, "some-other-binding-id", brokerapi.UnbindDetails{})
 		//			Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
 		//
-		//			_, err = broker.Deprovision(uniqueName, brokerapi.DeprovisionDetails{}, false)
+		//			_, err = broker.Deprovision(uniqueName, brokerapi.DeprovisionDetails{}, true)
 		//			Expect(err).NotTo(HaveOccurred())
 		//		}
 		//

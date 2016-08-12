@@ -109,7 +109,6 @@ func createServer(logger lager.Logger) ifrit.Runner {
 	}
 
 	config := aws.NewConfig()
-	config.Region = aws.String("us-west-2")
 
 	efsClient := efs.New(session, config)
 

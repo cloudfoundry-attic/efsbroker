@@ -133,7 +133,7 @@ var _ = Describe("Efsbroker Main", func() {
 			tempDir            string
 			username, password string
 
-			process    ifrit.Process
+			process ifrit.Process
 		)
 
 		BeforeEach(func() {

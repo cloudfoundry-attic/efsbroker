@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"code.cloudfoundry.org/efsbroker/efsdriver"
+	"code.cloudfoundry.org/goshims/ioutil"
+	"code.cloudfoundry.org/goshims/os"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
@@ -49,7 +51,8 @@ type broker struct {
 	logger      lager.Logger
 	provisioner efsdriver.EFSService
 	dataDir     string
-	fs          FileSystem
+	os          osshim.Os
+	ioutil      ioutilshim.Ioutil
 	mutex       lock
 
 	static  staticState
@@ -59,14 +62,16 @@ type broker struct {
 func New(
 	logger lager.Logger,
 	serviceName, serviceId, planName, planId, planDesc, dataDir string,
-	fileSystem FileSystem,
+	os osshim.Os,
+	ioutil ioutilshim.Ioutil,
 	provisioner efsdriver.EFSService,
 ) *broker {
 
 	theBroker := broker{
-		logger:      logger,
-		dataDir:     dataDir,
-		fs:          fileSystem,
+		logger:  logger,
+		dataDir: dataDir,
+		os:      os,
+		ioutil:  ioutil,
 		provisioner: provisioner,
 		mutex:       &sync.Mutex{},
 		static: staticState{
@@ -299,7 +304,7 @@ func (b *broker) persist(state interface{}) {
 		return
 	}
 
-	err = b.fs.WriteFile(stateFile, stateData, os.ModePerm)
+	err = b.ioutil.WriteFile(stateFile, stateData, os.ModePerm)
 	if err != nil {
 		b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
 		return

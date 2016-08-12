@@ -20,6 +20,8 @@ import (
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
 	"github.com/tedsuo/ifrit/http_server"
+	"code.cloudfoundry.org/goshims/os"
+	"code.cloudfoundry.org/goshims/ioutil"
 )
 
 var dataDir = flag.String(
@@ -112,9 +114,7 @@ func createServer(logger lager.Logger) ifrit.Runner {
 
 	efsClient := efs.New(session, config)
 
-	fileSystem := efsbroker.NewRealFileSystem()
-
-	serviceBroker := efsbroker.New(logger, *serviceName, *serviceId, *planName, *planId, *planDesc, *dataDir, &fileSystem, efsClient)
+	serviceBroker := efsbroker.New(logger, *serviceName, *serviceId, *planName, *planId, *planDesc, *dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, efsClient)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

@@ -11,8 +11,9 @@ import (
 	"os"
 
 	"code.cloudfoundry.org/efsbroker/efsbroker"
-	"code.cloudfoundry.org/efsbroker/efsbroker/efsbrokerfakes"
 	"code.cloudfoundry.org/efsbroker/efsdriver/efsdriverfakes"
+	"code.cloudfoundry.org/goshims/ioutil/ioutil_fake"
+	"code.cloudfoundry.org/goshims/os/os_fake"
 	"code.cloudfoundry.org/lager"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -26,7 +27,8 @@ type dynamicState struct {
 var _ = Describe("Broker", func() {
 	var (
 		broker             brokerapi.ServiceBroker
-		fakeFs             *efsbrokerfakes.FakeFileSystem
+		fakeOs             *os_fake.FakeOs
+		fakeIoutil         *ioutil_fake.FakeIoutil
 		fakeEFSService     *efsdriverfakes.FakeEFSService
 		logger             lager.Logger
 		WriteFileCallCount int
@@ -35,9 +37,10 @@ var _ = Describe("Broker", func() {
 
 	BeforeEach(func() {
 		logger = lagertest.NewTestLogger("test-broker")
-		fakeFs = &efsbrokerfakes.FakeFileSystem{}
+		fakeOs = &os_fake.FakeOs{}
+		fakeIoutil = &ioutil_fake.FakeIoutil{}
 		fakeEFSService = &efsdriverfakes.FakeEFSService{}
-		fakeFs.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
+		fakeIoutil.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
 			WriteFileCallCount++
 			WriteFileWrote = string(data)
 			return nil
@@ -94,7 +97,8 @@ var _ = Describe("Broker", func() {
 				logger,
 				"service-name", "service-id",
 				"plan-name", "plan-id", "plan-desc", "/fake-dir",
-				fakeFs,
+				fakeOs,
+				fakeIoutil,
 				fakeEFSService,
 			)
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{FileSystemId: aws.String("fakeFS")}, nil)

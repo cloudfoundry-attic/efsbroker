@@ -126,7 +126,7 @@ var _ = Describe("Broker", func() {
 
 		Context(".Provision", func() {
 			It("should provision the service instance", func() {
-				spec, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
+				spec, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{PlanID: "generalPurpose"}, true)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakeEFSService.CreateFileSystemCallCount()).To(Equal(1))
 				Expect(spec.IsAsync).To(Equal(true))
@@ -134,6 +134,13 @@ var _ = Describe("Broker", func() {
 				input := fakeEFSService.CreateFileSystemArgsForCall(0)
 				Expect(*input.PerformanceMode).To(Equal("generalPurpose"))
 				Expect(*input.CreationToken).To(Equal("some-instance-id"))
+			})
+
+			It("should provision the service instance with maxIO", func() {
+				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{PlanID: "maxIO"}, true)
+				Expect(err).NotTo(HaveOccurred())
+				input := fakeEFSService.CreateFileSystemArgsForCall(0)
+				Expect(*input.PerformanceMode).To(Equal("maxIO"))
 			})
 
 			Context("when provisioning errors", func() {

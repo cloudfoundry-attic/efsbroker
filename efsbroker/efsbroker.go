@@ -106,11 +106,7 @@ func (b *broker) Services() []brokerapi.Service {
 		Tags:          []string{"efs"},
 		Requires:      []brokerapi.RequiredPermission{PermissionVolumeMount},
 
-		Plans: []brokerapi.ServicePlan{ /*{
-				Name:        b.static.PlanName,
-				ID:          b.static.PlanId,
-				Description: b.static.PlanDesc,
-			},*/
+		Plans: []brokerapi.ServicePlan{
 			{
 				Name:        "generalPurpose",
 				ID:          "generalPurpose",
@@ -119,7 +115,8 @@ func (b *broker) Services() []brokerapi.Service {
 				Name:        "maxIO",
 				ID:          "maxIO",
 				Description: "scales to higher levels of aggregate throughput and operations per second with a tradeoff of slightly higher latencies for most file operations",
-			}},
+			},
+		},
 	}}
 }
 
@@ -144,7 +141,7 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	fsDescriptor, err := b.provisioner.CreateFileSystem(&efs.CreateFileSystemInput{
 		CreationToken:   aws.String(instanceID),
-		PerformanceMode: aws.String(efs.PerformanceModeGeneralPurpose),
+		PerformanceMode: planIDToPerformanceMode(details.PlanID),
 	})
 	if err != nil {
 		return brokerapi.ProvisionedServiceSpec{}, err
@@ -153,6 +150,13 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId}
 
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true}, nil
+}
+
+func planIDToPerformanceMode(planID string) *string {
+	if planID == "maxIO" {
+		return aws.String(efs.PerformanceModeMaxIo)
+	}
+	return aws.String(efs.PerformanceModeGeneralPurpose)
 }
 
 func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {

@@ -11,7 +11,7 @@ import (
 	"os"
 
 	"code.cloudfoundry.org/efsbroker/efsbroker"
-	"code.cloudfoundry.org/efsbroker/efsdriver/efsdriverfakes"
+	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
 	"code.cloudfoundry.org/goshims/ioutil/ioutil_fake"
 	"code.cloudfoundry.org/goshims/os/os_fake"
 	"code.cloudfoundry.org/lager"
@@ -29,7 +29,7 @@ var _ = Describe("Broker", func() {
 		broker             brokerapi.ServiceBroker
 		fakeOs             *os_fake.FakeOs
 		fakeIoutil         *ioutil_fake.FakeIoutil
-		fakeEFSService     *efsdriverfakes.FakeEFSService
+		fakeEFSService     *efsfakes.FakeEFSService
 		logger             lager.Logger
 		WriteFileCallCount int
 		WriteFileWrote     string
@@ -39,7 +39,7 @@ var _ = Describe("Broker", func() {
 		logger = lagertest.NewTestLogger("test-broker")
 		fakeOs = &os_fake.FakeOs{}
 		fakeIoutil = &ioutil_fake.FakeIoutil{}
-		fakeEFSService = &efsdriverfakes.FakeEFSService{}
+		fakeEFSService = &efsfakes.FakeEFSService{}
 		fakeIoutil.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
 			WriteFileCallCount++
 			WriteFileWrote = string(data)

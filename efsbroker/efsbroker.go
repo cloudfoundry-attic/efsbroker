@@ -10,8 +10,6 @@ import (
 
 	"sync"
 
-	"code.cloudfoundry.org/efsbroker/efsdriver"
-	"code.cloudfoundry.org/goshims/ioutil"
 	"code.cloudfoundry.org/goshims/os"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
@@ -49,7 +47,7 @@ type lock interface {
 
 type broker struct {
 	logger      lager.Logger
-	provisioner efsdriver.EFSService
+	provisioner EFSService
 	dataDir     string
 	os          osshim.Os
 	ioutil      ioutilshim.Ioutil
@@ -64,14 +62,14 @@ func New(
 	serviceName, serviceId, planName, planId, planDesc, dataDir string,
 	os osshim.Os,
 	ioutil ioutilshim.Ioutil,
-	provisioner efsdriver.EFSService,
+	provisioner EFSService,
 ) *broker {
 
 	theBroker := broker{
-		logger:  logger,
-		dataDir: dataDir,
-		os:      os,
-		ioutil:  ioutil,
+		logger:      logger,
+		dataDir:     dataDir,
+		os:          os,
+		ioutil:      ioutil,
 		provisioner: provisioner,
 		mutex:       &sync.Mutex{},
 		static: staticState{

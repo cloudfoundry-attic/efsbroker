@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"strings"
 
 	"code.cloudfoundry.org/cflager"
 	"code.cloudfoundry.org/debugserver"
@@ -12,6 +13,8 @@ import (
 
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/utils"
+	"code.cloudfoundry.org/goshims/ioutil"
+	"code.cloudfoundry.org/goshims/os"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -20,8 +23,6 @@ import (
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
 	"github.com/tedsuo/ifrit/http_server"
-	"code.cloudfoundry.org/goshims/os"
-	"code.cloudfoundry.org/goshims/ioutil"
 )
 
 var dataDir = flag.String(
@@ -70,15 +71,16 @@ var password = flag.String(
 	"admin",
 	"basic auth password to verify on incoming requests",
 )
+var awsSubnetIds = flag.String(
+	"awsSubnetIds",
+	"",
+	"list of comma-seperated aws subnet ids where mount targets will be created for each efs",
+)
 
 func main() {
 	parseCommandLine()
 
-	if *dataDir == "" {
-		fmt.Fprint(os.Stderr, "\nERROR: Required parameter dataDir not defined.\n\n")
-		flag.Usage()
-		os.Exit(1)
-	}
+	checkParams()
 
 	logger, logSink := cflager.New("efsbroker")
 	logger.Info("starting")
@@ -104,6 +106,24 @@ func parseCommandLine() {
 	flag.Parse()
 }
 
+func checkParams() {
+	if *dataDir == "" {
+		fmt.Fprint(os.Stderr, "\nERROR: Required parameter dataDir not defined.\n\n")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if *awsSubnetIds == "" {
+		fmt.Fprint(os.Stderr, "\nERROR: Required parameter awsSubnetIds not defined.\n\n")
+		flag.Usage()
+		os.Exit(1)
+	}
+}
+
+func parseSubnets(subnetsFlag string) []string {
+	return strings.Split(subnetsFlag, ",")
+}
+
 func createServer(logger lager.Logger) ifrit.Runner {
 	session, err := session.NewSession()
 	if err != nil {
@@ -114,7 +134,11 @@ func createServer(logger lager.Logger) ifrit.Runner {
 
 	efsClient := efs.New(session, config)
 
-	serviceBroker := efsbroker.New(logger, *serviceName, *serviceId, *planName, *planId, *planDesc, *dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, efsClient)
+	serviceBroker := efsbroker.New(logger,
+		*serviceName, *serviceId,
+		*planName, *planId, *planDesc,
+		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{},
+		efsClient, parseSubnets(*awsSubnetIds))
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

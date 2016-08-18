@@ -132,6 +132,7 @@ var _ = Describe("Efsbroker Main", func() {
 			listenAddr         string
 			tempDir            string
 			username, password string
+			awsSubnetIds       string
 
 			process ifrit.Process
 		)
@@ -141,11 +142,13 @@ var _ = Describe("Efsbroker Main", func() {
 			username = "admin"
 			password = "password"
 			tempDir = os.TempDir()
+			awsSubnetIds = "subnet-ajwe8912,subnet-olj23e"
 
 			args = append(args, "-listenAddr", listenAddr)
 			args = append(args, "-username", username)
 			args = append(args, "-password", password)
 			args = append(args, "-dataDir", tempDir)
+			args = append(args, "-awsSubnetIds", awsSubnetIds)
 
 		})
 

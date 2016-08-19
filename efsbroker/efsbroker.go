@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
+	"strings"
 )
 
 const (
@@ -257,7 +258,7 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 		time.Sleep(5 * time.Second) // TODO faketime plz
 		state, err = b.getFsStatus(logger, fsID)
 	}
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), "does not exist") {
 		b.setErrorOnInstance(instanceId, err)
 		return
 	}

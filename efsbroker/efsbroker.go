@@ -39,6 +39,7 @@ type staticState struct {
 type EFSInstance struct {
 	brokerapi.ProvisionDetails
 	EfsId string `json:"EfsId"`
+	err   bool
 }
 
 type dynamicState struct {
@@ -154,11 +155,11 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return brokerapi.ProvisionedServiceSpec{}, err
 	}
 
-	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId}
+	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId, false}
 
 	go b.createMountTargets(logger, *fsDescriptor.FileSystemId)
 
-	return brokerapi.ProvisionedServiceSpec{IsAsync: true}, nil
+	return brokerapi.ProvisionedServiceSpec{IsAsync: true, OperationData: "provision"}, nil
 }
 
 func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
@@ -203,27 +204,37 @@ func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	defer b.persist(b.dynamic)
-
 	instance, instanceExists := b.dynamic.InstanceMap[instanceID]
 	if !instanceExists {
 		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
-	err := b.deprovision(logger, instance.EfsId)
-	if err != nil {
-		return brokerapi.DeprovisionServiceSpec{}, err
-	}
+	go b.deprovision(logger, instance.EfsId, instanceID)
 
-	delete(b.dynamic.InstanceMap, instanceID)
-
-	return brokerapi.DeprovisionServiceSpec{}, nil
+	return brokerapi.DeprovisionServiceSpec{IsAsync: true, OperationData: "deprovision"}, nil
 }
 
-func (b *broker) deprovision(logger lager.Logger, fsID string) error {
+func (b *broker) setErrorOnInstance(instanceId string, err error) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	instance, instanceExists := b.dynamic.InstanceMap[instanceId]
+	if instanceExists {
+		instance.err = true
+		b.dynamic.InstanceMap[instanceId] = instance
+	}
+	return
+}
+
+func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string) {
+	logger = logger.Session("deprovision-impl")
+	logger.Info("start")
+	defer logger.Info("end")
+
 	err := b.deleteMountTargets(logger, fsID)
 	if err != nil {
-		return err
+		b.setErrorOnInstance(instanceId, err)
+		return
 	}
 
 	state, _ := b.getMountsStatus(logger, fsID)
@@ -232,17 +243,32 @@ func (b *broker) deprovision(logger lager.Logger, fsID string) error {
 		state, _ = b.getMountsStatus(logger, fsID)
 	}
 
-	//TODO handle error?
-
 	_, err = b.efsService.DeleteFileSystem(&efs.DeleteFileSystemInput{
 		FileSystemId: aws.String(fsID),
 	})
 	if err != nil {
 		logger.Error("failed-deleting-fs", err)
-		return err
+		b.setErrorOnInstance(instanceId, err)
+		return
 	}
 
-	return nil
+	state, err = b.getFsStatus(logger, fsID)
+	for state != efs.LifeCycleStateDeleted && err == nil {
+		time.Sleep(5 * time.Second) // TODO faketime plz
+		state, err = b.getFsStatus(logger, fsID)
+	}
+	if err != nil {
+		b.setErrorOnInstance(instanceId, err)
+		return
+	}
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	defer b.persist(b.dynamic)
+	delete(b.dynamic.InstanceMap, instanceId)
+
+	return
 }
 
 func (b *broker) deleteMountTargets(logger lager.Logger, fsId string) error {
@@ -307,18 +333,36 @@ func (b *broker) Update(instanceID string, details brokerapi.UpdateDetails, asyn
 
 func (b *broker) LastOperation(instanceID string, operationData string) (brokerapi.LastOperation, error) {
 	logger := b.logger.Session("last-operation").WithData(lager.Data{"instanceID": instanceID})
+	logger.Info("start")
+	defer logger.Info("end")
 
-	instance, instanceExists := b.dynamic.InstanceMap[instanceID]
-	if !instanceExists {
-		return brokerapi.LastOperation{}, brokerapi.ErrInstanceDoesNotExist
+	switch operationData {
+	case "provision":
+		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
+		if !instanceExists {
+			return brokerapi.LastOperation{}, brokerapi.ErrInstanceDoesNotExist
+		}
+
+		status, err := b.getStatus(logger, instance.EfsId)
+		if err != nil {
+			return brokerapi.LastOperation{}, err
+		}
+
+		return awsStateToLastOperation(status), nil
+	case "deprovision":
+		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
+		if !instanceExists {
+			return brokerapi.LastOperation{State: brokerapi.Succeeded}, nil
+		} else {
+			if instance.err {
+				return brokerapi.LastOperation{State: brokerapi.Failed}, nil
+			} else {
+				return brokerapi.LastOperation{State: brokerapi.InProgress}, nil
+			}
+		}
+	default:
+		return brokerapi.LastOperation{}, errors.New("unrecognized operationData")
 	}
-
-	status, err := b.getStatus(logger, instance.EfsId)
-	if err != nil {
-		return brokerapi.LastOperation{}, err
-	}
-
-	return awsStateToLastOperation(status), nil
 }
 
 func (b *broker) getStatus(logger lager.Logger, fsId string) (string, error) {

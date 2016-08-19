@@ -17,6 +17,7 @@ import (
 	"code.cloudfoundry.org/lager"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"time"
 )
 
 type dynamicState struct {
@@ -271,27 +272,49 @@ var _ = Describe("Broker", func() {
 						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
 					}},
 				}, nil)
+
+				fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+					FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateDeleted)}},
+				}, nil)
+
 			})
 
 			JustBeforeEach(func() {
 				_, err = broker.Deprovision(instanceID, brokerapi.DeprovisionDetails{}, asyncAllowed)
 			})
 
-			It("should deprovision the service", func() {
-				Expect(err).NotTo(HaveOccurred())
+			Context("when deprovision is working", func() {
+				JustBeforeEach(func() {
+					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+						MountTargets: []*efs.MountTargetDescription{{
+							MountTargetId:  aws.String("fake-mt-id"),
+							LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+						}},
+					}, nil)
 
-				By("checking that we can reprovision a slightly different service")
-				_, err = broker.Provision(instanceID, brokerapi.ProvisionDetails{ServiceID: "different-service-id"}, true)
-				Expect(err).NotTo(Equal(brokerapi.ErrInstanceAlreadyExists))
-			})
+					Eventually(func()brokerapi.LastOperationState{
+						retval, _ := broker.LastOperation(instanceID, "deprovision")
+						return retval.State
+					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
+				})
 
-			It("should delete the efs", func() {
-				Expect(fakeEFSService.DeleteFileSystemCallCount()).To(Equal(1))
-				Expect(*fakeEFSService.DeleteFileSystemArgsForCall(0).FileSystemId).To(Equal("fake-fs-id"))
+				It("should deprovision the service", func() {
+					Expect(err).NotTo(HaveOccurred())
+
+					By("checking that we can reprovision a slightly different service")
+					_, err = broker.Provision(instanceID, brokerapi.ProvisionDetails{ServiceID: "different-service-id"}, true)
+					Expect(err).NotTo(Equal(brokerapi.ErrInstanceAlreadyExists))
+				})
+
+				It("should delete the efs", func() {
+					Expect(fakeEFSService.DeleteFileSystemCallCount()).To(Equal(1))
+					Expect(*fakeEFSService.DeleteFileSystemArgsForCall(0).FileSystemId).To(Equal("fake-fs-id"))
+				})
+
 			})
 
 			It("should delete the mount targets", func() {
-				Expect(fakeEFSService.DeleteMountTargetCallCount()).To(Equal(1))
+				Eventually(fakeEFSService.DeleteMountTargetCallCount, time.Second, time.Millisecond * 10).Should(Equal(1))
 				Expect(*fakeEFSService.DeleteMountTargetArgsForCall(0).MountTargetId).To(Equal("fake-mt-id"))
 			})
 
@@ -305,8 +328,11 @@ var _ = Describe("Broker", func() {
 					}, nil)
 				})
 
-				It("should error", func() {
-					Expect(err).To(HaveOccurred())
+				It("should fail", func() {
+					Eventually(func()brokerapi.LastOperationState{
+						retval, _ := broker.LastOperation(instanceID, "deprovision")
+						return retval.State
+					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
 				})
 			})
 
@@ -315,8 +341,11 @@ var _ = Describe("Broker", func() {
 					fakeEFSService.DescribeMountTargetsReturns(nil, errors.New("badness"))
 				})
 
-				It("should error", func() {
-					Expect(err).To(HaveOccurred())
+				It("should fail", func() {
+					Eventually(func()brokerapi.LastOperationState{
+						retval, _ := broker.LastOperation(instanceID, "deprovision")
+						return retval.State
+					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
 				})
 			})
 
@@ -327,14 +356,17 @@ var _ = Describe("Broker", func() {
 					}, nil)
 				})
 
-				It("should continue without error", func() {
-					Expect(err).NotTo(HaveOccurred())
+				It("should succeed", func() {
+					Eventually(func()brokerapi.LastOperationState{
+						retval, _ := broker.LastOperation(instanceID, "deprovision")
+						return retval.State
+					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
 				})
 			})
 
 			Context("when the service instance does not exist", func() {
 				BeforeEach(func() {
-					instanceID = "nonexistant"
+					instanceID = "nonexistent"
 				})
 
 				It("errors", func() {
@@ -342,23 +374,56 @@ var _ = Describe("Broker", func() {
 				})
 			})
 
-			Context("when we fail to delete the file system", func() {
+			Context("when we immediately fail to delete the file system", func() {
 				BeforeEach(func() {
+					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+						MountTargets: []*efs.MountTargetDescription{{
+							MountTargetId:  aws.String("fake-mt-id"),
+							LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+						}},
+					}, nil)
+
 					fakeEFSService.DeleteFileSystemReturns(nil, errors.New("generic aws error"))
 				})
 
-				It("should error", func() {
-					Expect(err).To(HaveOccurred())
+				It("should fail", func() {
+					Eventually(func()brokerapi.LastOperationState{
+						retval, _ := broker.LastOperation(instanceID, "deprovision")
+						return retval.State
+					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
 				})
 			})
+			Context("when we eventually fail to delete the file system", func() {
+				BeforeEach(func() {
+					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+						MountTargets: []*efs.MountTargetDescription{{
+							MountTargetId:  aws.String("fake-mt-id"),
+							LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+						}},
+					}, nil)
+
+					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+						FileSystems: []*efs.FileSystemDescription{},
+					}, errors.New("some error"))
+				})
+
+				It("should fail", func() {
+					Eventually(func()brokerapi.LastOperationState{
+						retval, _ := broker.LastOperation(instanceID, "deprovision")
+						return retval.State
+					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
+				})
+			})
+
+
 
 			Context("when we fail to delete mount target", func() {
 				BeforeEach(func() {
 					fakeEFSService.DeleteMountTargetReturns(nil, errors.New("generic aws error"))
 				})
 
-				It("should error", func() {
-					Expect(err).To(HaveOccurred())
+				It("should not error yet", func() {
+					Expect(err).NotTo(HaveOccurred())
 				})
 			})
 

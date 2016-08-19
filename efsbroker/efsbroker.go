@@ -237,10 +237,11 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 		b.setErrorOnInstance(instanceId, err)
 		return
 	}
+	logger.Info("++++++++++++++++++++++++++mount target deleted++++++++++++++++++++++++")
 
 	state, _ := b.getMountsStatus(logger, fsID)
 	for state != efs.LifeCycleStateDeleted && state != "" {
-		time.Sleep(5 * time.Second) // TODO faketime plz
+		time.Sleep(100 * time.Millisecond) // TODO faketime plz
 		state, _ = b.getMountsStatus(logger, fsID)
 	}
 
@@ -252,6 +253,7 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 		b.setErrorOnInstance(instanceId, err)
 		return
 	}
+	logger.Info("++++++++++++++++++++++++++fs deleted++++++++++++++++++++++++")
 
 	state, err = b.getFsStatus(logger, fsID)
 	for state != efs.LifeCycleStateDeleted && err == nil {
@@ -259,9 +261,11 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 		state, err = b.getFsStatus(logger, fsID)
 	}
 	if err != nil && !strings.Contains(err.Error(), "does not exist") {
+		logger.Info("error returned:")
 		b.setErrorOnInstance(instanceId, err)
 		return
 	}
+	logger.Info("++++++++++++++++++++++++++end++++++++++++++++++++++++")
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
@@ -283,10 +287,12 @@ func (b *broker) deleteMountTargets(logger lager.Logger, fsId string) error {
 	}
 
 	if len(out.MountTargets) < 1 {
+		logger.Info("no-mount-targets")
 		return nil
 	}
 
 	if *out.MountTargets[0].LifeCycleState != efs.LifeCycleStateAvailable {
+		logger.Info("non-available-mount-targets")
 		return errors.New("invalid lifecycle transition, please wait until all mount targets are available")
 	}
 
@@ -421,6 +427,7 @@ func (b *broker) getMountsStatus(logger lager.Logger, fsId string) (string, erro
 		return "", ErrNoMountTargets
 	}
 
+	logger.Info("getMountsStatus-returning: " + *mtOutput.MountTargets[0].LifeCycleState)
 	return *mtOutput.MountTargets[0].LifeCycleState, nil
 }
 

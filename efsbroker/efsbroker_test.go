@@ -252,15 +252,22 @@ var _ = Describe("Broker", func() {
 			var (
 				instanceID   string
 				asyncAllowed bool
+				provisionDetails brokerapi.ProvisionDetails
 
 				err error
 			)
 
 			BeforeEach(func() {
-				instanceID = "some-instance-id"
-				asyncAllowed = true
+				WriteFileCallCount = 0
+				WriteFileWrote = ""
 
-				_, err := broker.Provision(instanceID, brokerapi.ProvisionDetails{}, true)
+				instanceID = "some-instance-id"
+				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
+				asyncAllowed = true
+			})
+
+			BeforeEach(func() {
+				_, err = broker.Provision(instanceID, provisionDetails, asyncAllowed)
 				Expect(err).NotTo(HaveOccurred())
 
 				WriteFileCallCount = 0
@@ -274,8 +281,13 @@ var _ = Describe("Broker", func() {
 				}, nil)
 
 				fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
-					FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateDeleted)}},
+					FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateAvailable)}},
 				}, nil)
+
+				Eventually(func()brokerapi.LastOperationState{
+					retval, _ := broker.LastOperation(instanceID, "provision")
+					return retval.State
+				}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
 
 			})
 
@@ -285,12 +297,18 @@ var _ = Describe("Broker", func() {
 
 			Context("when deprovision is working", func() {
 				JustBeforeEach(func() {
+					// make sure that the Deprovision has a chance to notice the mount target and return it before we
+					// call it deleted.
+					// THIS IS A BAD HACK AND WE SHOULD USE A FAKE CLOCK INSTEAD
+					Eventually(fakeEFSService.DescribeMountTargetsCallCount, time.Second * 10, time.Millisecond * 10).Should(Equal(3))
+
 					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 						MountTargets: []*efs.MountTargetDescription{{
 							MountTargetId:  aws.String("fake-mt-id"),
 							LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
 						}},
 					}, nil)
+					fakeEFSService.DescribeFileSystemsReturns(nil, errors.New("blah blah blah does not exist."))
 
 					Eventually(func()brokerapi.LastOperationState{
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
@@ -298,7 +316,7 @@ var _ = Describe("Broker", func() {
 					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
 				})
 
-				It("should deprovision the service", func() {
+				FIt("should deprovision the service", func() {
 					Expect(err).NotTo(HaveOccurred())
 
 					By("checking that we can reprovision a slightly different service")
@@ -458,7 +476,7 @@ var _ = Describe("Broker", func() {
 			})
 
 			JustBeforeEach(func() {
-				op, err = broker.LastOperation(instanceID, "")
+				op, err = broker.LastOperation(instanceID, "provision")
 			})
 
 			Context("while aws reports the fs is creating", func() {

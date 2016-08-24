@@ -13,6 +13,7 @@ import (
 
 	ioutilshim "code.cloudfoundry.org/goshims/ioutil"
 	osshim "code.cloudfoundry.org/goshims/os"
+	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
@@ -61,6 +62,7 @@ type broker struct {
 	os         osshim.Os
 	ioutil     ioutilshim.Ioutil
 	mutex      lock
+	clock 	   clock.Clock
 
 	static  staticState
 	dynamic dynamicState
@@ -71,6 +73,7 @@ func New(
 	serviceName, serviceId, planName, planId, planDesc, dataDir string,
 	os osshim.Os,
 	ioutil ioutilshim.Ioutil,
+	clock clock.Clock,
 	efsService EFSService, subnetIds []string,
 ) *broker {
 
@@ -82,6 +85,7 @@ func New(
 		efsService: efsService,
 		subnetIds:  subnetIds,
 		mutex:      &sync.Mutex{},
+		clock:	    clock,
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -151,6 +155,7 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		CreationToken:   aws.String(instanceID),
 		PerformanceMode: planIDToPerformanceMode(details.PlanID),
 	})
+
 	if err != nil {
 		logger.Error("failed-to-create-fs", err)
 		return brokerapi.ProvisionedServiceSpec{}, err
@@ -240,8 +245,9 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 	logger.Info("++++++++++++++++++++++++++mount target deleted++++++++++++++++++++++++")
 
 	state, _ := b.getMountsStatus(logger, fsID)
+
 	for state != efs.LifeCycleStateDeleted && state != "" {
-		time.Sleep(100 * time.Millisecond) // TODO faketime plz
+		b.clock.Sleep(100 * time.Millisecond)
 		state, _ = b.getMountsStatus(logger, fsID)
 	}
 

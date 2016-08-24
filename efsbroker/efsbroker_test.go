@@ -14,6 +14,7 @@ import (
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
 	"code.cloudfoundry.org/goshims/ioutil/ioutil_fake"
 	"code.cloudfoundry.org/goshims/os/os_fake"
+	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/lager"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -31,6 +32,7 @@ var _ = Describe("Broker", func() {
 		fakeOs             *os_fake.FakeOs
 		fakeIoutil         *ioutil_fake.FakeIoutil
 		fakeEFSService     *efsfakes.FakeEFSService
+		fakeClock	   *fakeclock.FakeClock
 		logger             lager.Logger
 		WriteFileCallCount int
 		WriteFileWrote     string
@@ -40,6 +42,7 @@ var _ = Describe("Broker", func() {
 		logger = lagertest.NewTestLogger("test-broker")
 		fakeOs = &os_fake.FakeOs{}
 		fakeIoutil = &ioutil_fake.FakeIoutil{}
+		fakeClock = fakeclock.NewFakeClock(time.Unix(123, 456))
 		fakeEFSService = &efsfakes.FakeEFSService{}
 		fakeIoutil.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
 			WriteFileCallCount++
@@ -100,18 +103,19 @@ var _ = Describe("Broker", func() {
 				"plan-name", "plan-id", "plan-desc", "/fake-dir",
 				fakeOs,
 				fakeIoutil,
+				fakeClock,
 				fakeEFSService, []string{"fake-subnet-id"},
 			)
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
 				FileSystemId: aws.String("fake-fs-id"),
 			}, nil)
-			fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
-				MountTargetId: aws.String("fake-mt-id"),
-			}, nil)
 			fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
 				FileSystems: []*efs.FileSystemDescription{{
 					FileSystemId: aws.String("fake-fs-id"),
 				}},
+			}, nil)
+			fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
+				MountTargetId: aws.String("fake-mt-id"),
 			}, nil)
 		})
 
@@ -288,7 +292,6 @@ var _ = Describe("Broker", func() {
 					retval, _ := broker.LastOperation(instanceID, "provision")
 					return retval.State
 				}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
-
 			})
 
 			JustBeforeEach(func() {
@@ -297,10 +300,7 @@ var _ = Describe("Broker", func() {
 
 			Context("when deprovision is working", func() {
 				JustBeforeEach(func() {
-					// make sure that the Deprovision has a chance to notice the mount target and return it before we
-					// call it deleted.
-					// THIS IS A BAD HACK AND WE SHOULD USE A FAKE CLOCK INSTEAD
-					Eventually(fakeEFSService.DescribeMountTargetsCallCount, time.Second * 10, time.Millisecond * 10).Should(Equal(3))
+					fakeClock.WaitForWatcherAndIncrement(100 * time.Millisecond)
 
 					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 						MountTargets: []*efs.MountTargetDescription{{
@@ -308,6 +308,7 @@ var _ = Describe("Broker", func() {
 							LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
 						}},
 					}, nil)
+
 					fakeEFSService.DescribeFileSystemsReturns(nil, errors.New("blah blah blah does not exist."))
 
 					Eventually(func()brokerapi.LastOperationState{

@@ -23,6 +23,7 @@ import (
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
 	"github.com/tedsuo/ifrit/http_server"
+	"code.cloudfoundry.org/clock"
 )
 
 var dataDir = flag.String(
@@ -137,7 +138,7 @@ func createServer(logger lager.Logger) ifrit.Runner {
 	serviceBroker := efsbroker.New(logger,
 		*serviceName, *serviceId,
 		*planName, *planId, *planDesc,
-		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{},
+		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, clock.NewClock(),
 		efsClient, parseSubnets(*awsSubnetIds))
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}

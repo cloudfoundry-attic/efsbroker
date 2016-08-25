@@ -19,15 +19,17 @@ import (
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
 	"strings"
+	"path"
 )
 
 const (
 	PermissionVolumeMount = brokerapi.RequiredPermission("volume_mount")
-	//DefaultContainerPath  = "/var/vcap/data"
+	DefaultContainerPath  = "/var/vcap/data"
 )
 
 var (
 	ErrNoMountTargets = errors.New("no mount targets found")
+	ErrMountTargetUnavailable = errors.New("mount target not in available state")
 )
 
 type staticState struct {
@@ -178,7 +180,7 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 			continue
 		}
 
-		time.Sleep(5 * time.Second) // TODfaketime plz
+		time.Sleep(5 * time.Second) // TODO faketime plz
 		state, err = b.getFsStatus(logger, fsID)
 	}
 
@@ -324,7 +326,62 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 
 	defer b.persist(b.dynamic)
 
-	return brokerapi.Binding{}, errors.New("unimplemented")
+	fs, ok := b.dynamic.InstanceMap[instanceID]
+	if !ok {
+		return brokerapi.Binding{}, brokerapi.ErrInstanceDoesNotExist
+	}
+
+	if details.AppGUID == "" {
+		return brokerapi.Binding{}, brokerapi.ErrAppGuidNotProvided
+	}
+
+	mode, err := evaluateMode(details.Parameters)
+	if err != nil {
+		return brokerapi.Binding{}, err
+	}
+
+	if b.bindingConflicts(bindingID, details) {
+		return brokerapi.Binding{}, brokerapi.ErrBindingAlreadyExists
+	}
+
+	b.dynamic.BindingMap[bindingID] = details
+
+	// get mount point details from ews to return in bind response
+	mtOutput, err := b.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
+		FileSystemId: aws.String(fs.EfsId),
+	})
+	if err != nil {
+		logger.Error("err-getting-mount-target-status", err)
+		return brokerapi.Binding{}, err
+	}
+	if len(mtOutput.MountTargets) < 1 {
+		logger.Error("found-no-mount-targets", ErrNoMountTargets)
+		return brokerapi.Binding{}, ErrNoMountTargets
+	}
+
+	if mtOutput.MountTargets[0].LifeCycleState == nil ||
+		*mtOutput.MountTargets[0].LifeCycleState != efs.LifeCycleStateAvailable {
+		logger.Error("mount-point-unavailable", ErrMountTargetUnavailable)
+		return brokerapi.Binding{}, ErrMountTargetUnavailable
+	}
+
+	mountConfig := map[string]interface{}{
+		"ip":     *mtOutput.MountTargets[0].IpAddress,
+	}
+
+	return brokerapi.Binding{
+		Credentials: struct{}{}, // if nil, cloud controller chokes on response
+		VolumeMounts: []brokerapi.VolumeMount{{
+			ContainerDir: evaluateContainerPath(details.Parameters, instanceID),
+			Mode:         mode,
+			Driver:       "efsdriver",
+			DeviceType:   "shared",
+			Device: brokerapi.SharedDevice{
+				VolumeId:    instanceID,
+				MountConfig: mountConfig,
+			},
+		}},
+	}, nil
 }
 
 func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.UnbindDetails) error {
@@ -337,7 +394,18 @@ func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.U
 
 	defer b.persist(b.dynamic)
 
-	return errors.New("unimplemented")
+
+	if _, ok := b.dynamic.InstanceMap[instanceID]; !ok {
+		return brokerapi.ErrInstanceDoesNotExist
+	}
+
+	if _, ok := b.dynamic.BindingMap[bindingID]; !ok {
+		return brokerapi.ErrBindingDoesNotExist
+	}
+
+	delete(b.dynamic.BindingMap, bindingID)
+
+	return nil
 }
 
 func (b *broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
@@ -457,25 +525,25 @@ func (b *broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceI
 	return false
 }
 
-//func evaluateContainerPath(parameters map[string]interface{}, volId string) string {
-//	if containerPath, ok := parameters["mount"]; ok && containerPath != "" {
-//		return containerPath.(string)
-//	}
-//
-//	return path.Join(DefaultContainerPath, volId)
-//}
-//
-//func evaluateMode(parameters map[string]interface{}) (string, error) {
-//	if ro, ok := parameters["readonly"]; ok {
-//		switch ro := ro.(type) {
-//		case bool:
-//			return readOnlyToMode(ro), nil
-//		default:
-//			return "", brokerapi.ErrRawParamsInvalid
-//		}
-//	}
-//	return "rw", nil
-//}
+func evaluateContainerPath(parameters map[string]interface{}, volId string) string {
+	if containerPath, ok := parameters["mount"]; ok && containerPath != "" {
+		return containerPath.(string)
+	}
+
+	return path.Join(DefaultContainerPath, volId)
+}
+
+func evaluateMode(parameters map[string]interface{}) (string, error) {
+	if ro, ok := parameters["readonly"]; ok {
+		switch ro := ro.(type) {
+		case bool:
+			return readOnlyToMode(ro), nil
+		default:
+			return "", brokerapi.ErrRawParamsInvalid
+		}
+	}
+	return "rw", nil
+}
 
 func readOnlyToMode(ro bool) string {
 	if ro {

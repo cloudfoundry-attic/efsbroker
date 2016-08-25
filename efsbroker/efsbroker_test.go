@@ -607,143 +607,158 @@ var _ = Describe("Broker", func() {
 				})
 			})
 		})
-		//
-		//Context(".Bind", func() {
-		//	var bindDetails brokerapi.BindDetails
-		//
-		//	BeforeEach(func() {
-		//		_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		bindDetails = brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}}
-		//	})
-		//
-		//	It("includes empty credentials to prevent CAPI crash", func() {
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		Expect(binding.Credentials).NotTo(BeNil())
-		//	})
-		//
-		//	It("uses the instance id in the default container path", func() {
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//		Expect(binding.VolumeMounts[0].ContainerPath).To(Equal("/var/vcap/data/some-instance-id"))
-		//	})
-		//
-		//	It("flows container path through", func() {
-		//		bindDetails.Parameters["mount"] = "/var/vcap/otherdir/something"
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//		Expect(binding.VolumeMounts[0].ContainerPath).To(Equal("/var/vcap/otherdir/something"))
-		//	})
-		//
-		//	It("uses rw as its default mode", func() {
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//		Expect(binding.VolumeMounts[0].Mode).To(Equal("rw"))
-		//	})
-		//
-		//	It("sets mode to `r` when readonly is true", func() {
-		//		bindDetails.Parameters["readonly"] = true
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		Expect(binding.VolumeMounts[0].Mode).To(Equal("r"))
-		//	})
-		//
-		//	It("should write state", func() {
-		//		WriteFileCallCount = 0
-		//		WriteFileWrote = ""
-		//		_, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		Expect(WriteFileCallCount).To(Equal(1))
-		//		Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{\"some-instance-id\":{\"service_id\":\"\",\"plan_id\":\"\",\"organization_guid\":\"\",\"space_guid\":\"\"}},\"BindingMap\":{\"binding-id\":{\"app_guid\":\"guid\",\"plan_id\":\"\",\"service_id\":\"\"}}}"))
-		//	})
-		//
-		//	It("errors if mode is not a boolean", func() {
-		//		bindDetails.Parameters["readonly"] = ""
-		//		_, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).To(Equal(brokerapi.ErrRawParamsInvalid))
-		//	})
-		//
-		//	It("fills in the driver name", func() {
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		Expect(binding.VolumeMounts[0].Private.Driver).To(Equal("localdriver"))
-		//	})
-		//
-		//	It("fills in the group id", func() {
-		//		binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		Expect(binding.VolumeMounts[0].Private.GroupId).To(Equal("some-instance-id"))
-		//	})
-		//
-		//	Context("when the binding already exists", func() {
-		//		BeforeEach(func() {
-		//			_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
-		//			Expect(err).NotTo(HaveOccurred())
-		//		})
-		//
-		//		It("doesn't error when binding the same details", func() {
-		//			_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
-		//			Expect(err).NotTo(HaveOccurred())
-		//		})
-		//
-		//		It("errors when binding different details", func() {
-		//			_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "different"})
-		//			Expect(err).To(Equal(brokerapi.ErrBindingAlreadyExists))
-		//		})
-		//	})
-		//
-		//	It("errors when the service instance does not exist", func() {
-		//		_, err := broker.Bind("nonexistant-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
-		//		Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
-		//	})
-		//
-		//	It("errors when the app guid is not provided", func() {
-		//		_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{})
-		//		Expect(err).To(Equal(brokerapi.ErrAppGuidNotProvided))
-		//	})
-		//})
-		//
-		//Context(".Unbind", func() {
-		//	BeforeEach(func() {
-		//		_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		_, err = broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
-		//		Expect(err).NotTo(HaveOccurred())
-		//	})
-		//
-		//	It("unbinds a bound service instance from an app", func() {
-		//		err := broker.Unbind("some-instance-id", "binding-id", brokerapi.UnbindDetails{})
-		//		Expect(err).NotTo(HaveOccurred())
-		//	})
-		//
-		//	It("fails when trying to unbind a instance that has not been provisioned", func() {
-		//		err := broker.Unbind("some-other-instance-id", "binding-id", brokerapi.UnbindDetails{})
-		//		Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
-		//	})
-		//
-		//	It("fails when trying to unbind a binding that has not been bound", func() {
-		//		err := broker.Unbind("some-instance-id", "some-other-binding-id", brokerapi.UnbindDetails{})
-		//		Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
-		//	})
-		//	It("should write state", func() {
-		//		WriteFileCallCount = 0
-		//		WriteFileWrote = ""
-		//		err := broker.Unbind("some-instance-id", "binding-id", brokerapi.UnbindDetails{})
-		//		Expect(err).NotTo(HaveOccurred())
-		//
-		//		Expect(WriteFileCallCount).To(Equal(1))
-		//		Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{\"some-instance-id\":{\"service_id\":\"\",\"plan_id\":\"\",\"organization_guid\":\"\",\"space_guid\":\"\"}},\"BindingMap\":{}}"))
-		//	})
-		//
-		//})
+
+		Context(".Bind", func() {
+			var bindDetails brokerapi.BindDetails
+
+			BeforeEach(func() {
+				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
+				Expect(err).NotTo(HaveOccurred())
+
+				bindDetails = brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}}
+
+				fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+					MountTargets: []*efs.MountTargetDescription{{
+						IpAddress: aws.String("1.1.1.1"),
+						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+					}},
+				}, nil)
+			})
+
+			It("includes empty credentials to prevent CAPI crash", func() {
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(binding.Credentials).NotTo(BeNil())
+			})
+
+			It("uses the instance id in the default container path", func() {
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(binding.VolumeMounts[0].ContainerDir).To(Equal("/var/vcap/data/some-instance-id"))
+			})
+
+			It("flows container path through", func() {
+				bindDetails.Parameters["mount"] = "/var/vcap/otherdir/something"
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(binding.VolumeMounts[0].ContainerDir).To(Equal("/var/vcap/otherdir/something"))
+			})
+
+			It("uses rw as its default mode", func() {
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(binding.VolumeMounts[0].Mode).To(Equal("rw"))
+			})
+
+			It("sets mode to `r` when readonly is true", func() {
+				bindDetails.Parameters["readonly"] = true
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(binding.VolumeMounts[0].Mode).To(Equal("r"))
+			})
+
+			It("should write state", func() {
+				WriteFileCallCount = 0
+				WriteFileWrote = ""
+				_, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(WriteFileCallCount).To(Equal(1))
+				Expect(WriteFileWrote).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"fake-fs-id"}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
+			})
+
+			It("errors if mode is not a boolean", func() {
+				bindDetails.Parameters["readonly"] = ""
+				_, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).To(Equal(brokerapi.ErrRawParamsInvalid))
+			})
+
+			It("fills in the driver name", func() {
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(binding.VolumeMounts[0].Driver).To(Equal("efsdriver"))
+			})
+
+			It("fills in the group id", func() {
+				binding, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(binding.VolumeMounts[0].Device.VolumeId).To(Equal("some-instance-id"))
+			})
+
+			Context("when the binding already exists", func() {
+				BeforeEach(func() {
+					_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				It("doesn't error when binding the same details", func() {
+					_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				It("errors when binding different details", func() {
+					_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "different"})
+					Expect(err).To(Equal(brokerapi.ErrBindingAlreadyExists))
+				})
+			})
+
+			It("errors when the service instance does not exist", func() {
+				_, err := broker.Bind("nonexistent-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
+			})
+
+			It("errors when the app guid is not provided", func() {
+				_, err := broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{})
+				Expect(err).To(Equal(brokerapi.ErrAppGuidNotProvided))
+			})
+		})
+
+		FContext(".Unbind", func() {
+			BeforeEach(func() {
+				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
+				Expect(err).NotTo(HaveOccurred())
+
+				fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+					MountTargets: []*efs.MountTargetDescription{{
+						IpAddress: aws.String("1.1.1.1"),
+						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+					}},
+				}, nil)
+
+				_, err = broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("unbinds a bound service instance from an app", func() {
+				err := broker.Unbind("some-instance-id", "binding-id", brokerapi.UnbindDetails{})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("fails when trying to unbind a instance that has not been provisioned", func() {
+				err := broker.Unbind("some-other-instance-id", "binding-id", brokerapi.UnbindDetails{})
+				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
+			})
+
+			It("fails when trying to unbind a binding that has not been bound", func() {
+				err := broker.Unbind("some-instance-id", "some-other-binding-id", brokerapi.UnbindDetails{})
+				Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
+			})
+			It("should write state", func() {
+				WriteFileCallCount = 0
+				WriteFileWrote = ""
+				err := broker.Unbind("some-instance-id", "binding-id", brokerapi.UnbindDetails{})
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(WriteFileCallCount).To(Equal(1))
+				Expect(WriteFileWrote).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"fake-fs-id"}},"BindingMap":{}}`))
+			})
+
+		})
+
 		//Context("when multiple operations happen in parallel", func() {
 		//	It("maintains consistency", func() {
 		//		var wg sync.WaitGroup

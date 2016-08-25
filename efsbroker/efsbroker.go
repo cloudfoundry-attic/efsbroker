@@ -11,9 +11,9 @@ import (
 
 	"sync"
 
+	"code.cloudfoundry.org/clock"
 	ioutilshim "code.cloudfoundry.org/goshims/ioutil"
 	osshim "code.cloudfoundry.org/goshims/os"
-	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
@@ -62,7 +62,7 @@ type broker struct {
 	os         osshim.Os
 	ioutil     ioutilshim.Ioutil
 	mutex      lock
-	clock 	   clock.Clock
+	clock      clock.Clock
 
 	static  staticState
 	dynamic dynamicState
@@ -85,7 +85,7 @@ func New(
 		efsService: efsService,
 		subnetIds:  subnetIds,
 		mutex:      &sync.Mutex{},
-		clock:	    clock,
+		clock:      clock,
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -263,7 +263,7 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 
 	state, err = b.getFsStatus(logger, fsID)
 	for state != efs.LifeCycleStateDeleted && err == nil {
-		time.Sleep(5 * time.Second) // TODO faketime plz
+		b.clock.Sleep(100 * time.Millisecond)
 		state, err = b.getFsStatus(logger, fsID)
 	}
 	if err != nil && !strings.Contains(err.Error(), "does not exist") {

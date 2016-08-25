@@ -10,11 +10,11 @@ import (
 
 	"os"
 
+	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
 	"code.cloudfoundry.org/goshims/ioutil/ioutil_fake"
 	"code.cloudfoundry.org/goshims/os/os_fake"
-	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/lager"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -32,7 +32,7 @@ var _ = Describe("Broker", func() {
 		fakeOs             *os_fake.FakeOs
 		fakeIoutil         *ioutil_fake.FakeIoutil
 		fakeEFSService     *efsfakes.FakeEFSService
-		fakeClock	   *fakeclock.FakeClock
+		fakeClock          *fakeclock.FakeClock
 		logger             lager.Logger
 		WriteFileCallCount int
 		WriteFileWrote     string
@@ -254,8 +254,8 @@ var _ = Describe("Broker", func() {
 
 		Context(".Deprovision", func() {
 			var (
-				instanceID   string
-				asyncAllowed bool
+				instanceID       string
+				asyncAllowed     bool
 				provisionDetails brokerapi.ProvisionDetails
 
 				err error
@@ -288,10 +288,10 @@ var _ = Describe("Broker", func() {
 					FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateAvailable)}},
 				}, nil)
 
-				Eventually(func()brokerapi.LastOperationState{
+				Eventually(func() brokerapi.LastOperationState {
 					retval, _ := broker.LastOperation(instanceID, "provision")
 					return retval.State
-				}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
+				}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Succeeded))
 			})
 
 			JustBeforeEach(func() {
@@ -311,13 +311,13 @@ var _ = Describe("Broker", func() {
 
 					fakeEFSService.DescribeFileSystemsReturns(nil, errors.New("blah blah blah does not exist."))
 
-					Eventually(func()brokerapi.LastOperationState{
+					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
 						return retval.State
-					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Succeeded))
 				})
 
-				FIt("should deprovision the service", func() {
+				It("should deprovision the service", func() {
 					Expect(err).NotTo(HaveOccurred())
 
 					By("checking that we can reprovision a slightly different service")
@@ -330,10 +330,14 @@ var _ = Describe("Broker", func() {
 					Expect(*fakeEFSService.DeleteFileSystemArgsForCall(0).FileSystemId).To(Equal("fake-fs-id"))
 				})
 
+				It("should write state", func() {
+					Expect(WriteFileCallCount).To(Equal(1))
+					Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{},\"BindingMap\":{}}"))
+				})
 			})
 
 			It("should delete the mount targets", func() {
-				Eventually(fakeEFSService.DeleteMountTargetCallCount, time.Second, time.Millisecond * 10).Should(Equal(1))
+				Eventually(fakeEFSService.DeleteMountTargetCallCount, time.Second, time.Millisecond*10).Should(Equal(1))
 				Expect(*fakeEFSService.DeleteMountTargetArgsForCall(0).MountTargetId).To(Equal("fake-mt-id"))
 			})
 
@@ -348,10 +352,10 @@ var _ = Describe("Broker", func() {
 				})
 
 				It("should fail", func() {
-					Eventually(func()brokerapi.LastOperationState{
+					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
 						return retval.State
-					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Failed))
 				})
 			})
 
@@ -361,10 +365,10 @@ var _ = Describe("Broker", func() {
 				})
 
 				It("should fail", func() {
-					Eventually(func()brokerapi.LastOperationState{
+					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
 						return retval.State
-					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Failed))
 				})
 			})
 
@@ -375,11 +379,19 @@ var _ = Describe("Broker", func() {
 					}, nil)
 				})
 
+				JustBeforeEach(func() {
+					fakeClock.WaitForWatcherAndIncrement(100 * time.Millisecond)
+
+					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+						FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateDeleted)}},
+					}, nil)
+				})
+
 				It("should succeed", func() {
-					Eventually(func()brokerapi.LastOperationState{
+					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
 						return retval.State
-					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Succeeded))
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Succeeded))
 				})
 			})
 
@@ -406,12 +418,13 @@ var _ = Describe("Broker", func() {
 				})
 
 				It("should fail", func() {
-					Eventually(func()brokerapi.LastOperationState{
+					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
 						return retval.State
-					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Failed))
 				})
 			})
+
 			Context("when we eventually fail to delete the file system", func() {
 				BeforeEach(func() {
 					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
@@ -427,14 +440,12 @@ var _ = Describe("Broker", func() {
 				})
 
 				It("should fail", func() {
-					Eventually(func()brokerapi.LastOperationState{
+					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")
 						return retval.State
-					}, time.Second * 1, time.Millisecond * 100).Should(Equal(brokerapi.Failed))
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Failed))
 				})
 			})
-
-
 
 			Context("when we fail to delete mount target", func() {
 				BeforeEach(func() {
@@ -454,11 +465,6 @@ var _ = Describe("Broker", func() {
 				It("should not error", func() {
 					Expect(err).NotTo(HaveOccurred())
 				})
-			})
-
-			It("should write state", func() {
-				Expect(WriteFileCallCount).To(Equal(1))
-				Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{},\"BindingMap\":{}}"))
 			})
 		})
 

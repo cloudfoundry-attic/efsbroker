@@ -18,8 +18,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
-	"strings"
 	"path"
+	"strings"
 )
 
 const (
@@ -28,7 +28,7 @@ const (
 )
 
 var (
-	ErrNoMountTargets = errors.New("no mount targets found")
+	ErrNoMountTargets         = errors.New("no mount targets found")
 	ErrMountTargetUnavailable = errors.New("mount target not in available state")
 )
 
@@ -366,7 +366,7 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 	}
 
 	mountConfig := map[string]interface{}{
-		"ip":     *mtOutput.MountTargets[0].IpAddress,
+		"ip": *mtOutput.MountTargets[0].IpAddress,
 	}
 
 	return brokerapi.Binding{
@@ -394,7 +394,6 @@ func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.U
 
 	defer b.persist(b.dynamic)
 
-
 	if _, ok := b.dynamic.InstanceMap[instanceID]; !ok {
 		return brokerapi.ErrInstanceDoesNotExist
 	}
@@ -416,6 +415,9 @@ func (b *broker) LastOperation(instanceID string, operationData string) (brokera
 	logger := b.logger.Session("last-operation").WithData(lager.Data{"instanceID": instanceID})
 	logger.Info("start")
 	defer logger.Info("end")
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
 	switch operationData {
 	case "provision":

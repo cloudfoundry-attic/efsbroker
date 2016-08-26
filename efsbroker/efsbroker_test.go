@@ -535,11 +535,12 @@ var _ = Describe("Broker", func() {
 
 			BeforeEach(func() {
 				instanceID = "some-instance-id"
-				_, err = broker.Provision(instanceID, brokerapi.ProvisionDetails{}, true)
-				Expect(err).NotTo(HaveOccurred())
 			})
 
 			JustBeforeEach(func() {
+				_, err = broker.Provision(instanceID, brokerapi.ProvisionDetails{}, true)
+				Expect(err).NotTo(HaveOccurred())
+
 				op, err = broker.LastOperation(instanceID, "provision")
 			})
 
@@ -655,11 +656,8 @@ var _ = Describe("Broker", func() {
 			})
 
 			Context("when the instance doesn't exist", func() {
-				BeforeEach(func() {
-					instanceID = "nonexistant"
-				})
-
 				It("errors", func() {
+					op, err = broker.LastOperation("non-existant", "provision")
 					Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 				})
 			})

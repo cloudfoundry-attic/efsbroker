@@ -180,7 +180,7 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 			continue
 		}
 
-		time.Sleep(5 * time.Second) // TODO faketime plz
+		b.clock.Sleep(5 * time.Second)
 		state, err = b.getFsStatus(logger, fsID)
 	}
 

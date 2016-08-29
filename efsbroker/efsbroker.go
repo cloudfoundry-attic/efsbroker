@@ -25,6 +25,7 @@ import (
 const (
 	PermissionVolumeMount = brokerapi.RequiredPermission("volume_mount")
 	DefaultContainerPath  = "/var/vcap/data"
+	PollingInterval       = 3 * time.Second
 )
 
 var (
@@ -180,7 +181,7 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 			continue
 		}
 
-		b.clock.Sleep(5 * time.Second)
+		b.clock.Sleep(PollingInterval)
 		state, err = b.getFsStatus(logger, fsID)
 	}
 
@@ -249,7 +250,7 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 	state, _ := b.getMountsStatus(logger, fsID)
 
 	for state != efs.LifeCycleStateDeleted && state != "" {
-		b.clock.Sleep(100 * time.Millisecond)
+		b.clock.Sleep(PollingInterval)
 		state, _ = b.getMountsStatus(logger, fsID)
 	}
 
@@ -265,7 +266,7 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 
 	state, err = b.getFsStatus(logger, fsID)
 	for state != efs.LifeCycleStateDeleted && err == nil {
-		b.clock.Sleep(100 * time.Millisecond)
+		b.clock.Sleep(PollingInterval)
 		state, err = b.getFsStatus(logger, fsID)
 	}
 	if err != nil && !strings.Contains(err.Error(), "does not exist") {

@@ -333,7 +333,7 @@ var _ = Describe("Broker", func() {
 
 					_, err = broker.Deprovision(instanceID, brokerapi.DeprovisionDetails{}, asyncAllowed)
 
-					fakeClock.WaitForWatcherAndIncrement(100 * time.Millisecond)
+					fakeClock.WaitForWatcherAndIncrement(2*efsbroker.PollingInterval)
 
 					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")

@@ -366,9 +366,7 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 		return brokerapi.Binding{}, ErrMountTargetUnavailable
 	}
 
-	mountConfig := map[string]interface{}{
-		"ip": *mtOutput.MountTargets[0].IpAddress,
-	}
+	mountConfig := "{\"ip\": \"" + *mtOutput.MountTargets[0].IpAddress + "\"}"
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response

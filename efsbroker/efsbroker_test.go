@@ -104,7 +104,9 @@ var _ = Describe("Broker", func() {
 				fakeOs,
 				fakeIoutil,
 				fakeClock,
-				fakeEFSService, []string{"fake-subnet-id"},
+				fakeEFSService,
+				[]string{"fake-subnet-id"},
+				"fake-security-group",
 			)
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
 				FileSystemId: aws.String("fake-fs-id"),
@@ -333,7 +335,7 @@ var _ = Describe("Broker", func() {
 
 					_, err = broker.Deprovision(instanceID, brokerapi.DeprovisionDetails{}, asyncAllowed)
 
-					fakeClock.WaitForWatcherAndIncrement(2*efsbroker.PollingInterval)
+					fakeClock.WaitForWatcherAndIncrement(2 * efsbroker.PollingInterval)
 
 					Eventually(func() brokerapi.LastOperationState {
 						retval, _ := broker.LastOperation(instanceID, "deprovision")

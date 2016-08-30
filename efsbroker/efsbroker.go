@@ -61,6 +61,7 @@ type broker struct {
 	logger     lager.Logger
 	efsService EFSService
 	subnetIds  []string
+	securityGroup string
 	dataDir    string
 	os         osshim.Os
 	ioutil     ioutilshim.Ioutil
@@ -77,7 +78,7 @@ func New(
 	os osshim.Os,
 	ioutil ioutilshim.Ioutil,
 	clock clock.Clock,
-	efsService EFSService, subnetIds []string,
+	efsService EFSService, subnetIds []string, securityGroup string,
 ) *broker {
 
 	theBroker := broker{
@@ -87,6 +88,7 @@ func New(
 		ioutil:     ioutil,
 		efsService: efsService,
 		subnetIds:  subnetIds,
+		securityGroup: securityGroup,
 		mutex:      &sync.Mutex{},
 		clock:      clock,
 		static: staticState{
@@ -189,6 +191,7 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 	_, err = b.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
 		FileSystemId: aws.String(fsID),
 		SubnetId:     aws.String(b.subnetIds[0]),
+		SecurityGroups: []*string{aws.String(b.securityGroup)},
 	})
 
 	if err != nil {

@@ -77,6 +77,11 @@ var awsSubnetIds = flag.String(
 	"",
 	"list of comma-seperated aws subnet ids where mount targets will be created for each efs",
 )
+var awsSecurityGroup = flag.String(
+	"awsSecurityGroup",
+	"",
+	"aws security group to assign to the mount point",
+)
 
 func main() {
 	parseCommandLine()
@@ -139,7 +144,7 @@ func createServer(logger lager.Logger) ifrit.Runner {
 		*serviceName, *serviceId,
 		*planName, *planId, *planDesc,
 		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, clock.NewClock(),
-		efsClient, parseSubnets(*awsSubnetIds))
+		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

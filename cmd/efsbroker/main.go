@@ -11,6 +11,7 @@ import (
 
 	"os"
 
+	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/utils"
 	"code.cloudfoundry.org/goshims/ioutil"
@@ -23,7 +24,6 @@ import (
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
 	"github.com/tedsuo/ifrit/http_server"
-	"code.cloudfoundry.org/clock"
 )
 
 var dataDir = flag.String(

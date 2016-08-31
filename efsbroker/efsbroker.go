@@ -58,15 +58,15 @@ type lock interface {
 }
 
 type broker struct {
-	logger     lager.Logger
-	efsService EFSService
-	subnetIds  []string
+	logger        lager.Logger
+	efsService    EFSService
+	subnetIds     []string
 	securityGroup string
-	dataDir    string
-	os         osshim.Os
-	ioutil     ioutilshim.Ioutil
-	mutex      lock
-	clock      clock.Clock
+	dataDir       string
+	os            osshim.Os
+	ioutil        ioutilshim.Ioutil
+	mutex         lock
+	clock         clock.Clock
 
 	static  staticState
 	dynamic dynamicState
@@ -82,15 +82,15 @@ func New(
 ) *broker {
 
 	theBroker := broker{
-		logger:     logger,
-		dataDir:    dataDir,
-		os:         os,
-		ioutil:     ioutil,
-		efsService: efsService,
-		subnetIds:  subnetIds,
+		logger:        logger,
+		dataDir:       dataDir,
+		os:            os,
+		ioutil:        ioutil,
+		efsService:    efsService,
+		subnetIds:     subnetIds,
 		securityGroup: securityGroup,
-		mutex:      &sync.Mutex{},
-		clock:      clock,
+		mutex:         &sync.Mutex{},
+		clock:         clock,
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -189,8 +189,8 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 
 	logger.Info("creating-mount-targets")
 	_, err = b.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
-		FileSystemId: aws.String(fsID),
-		SubnetId:     aws.String(b.subnetIds[0]),
+		FileSystemId:   aws.String(fsID),
+		SubnetId:       aws.String(b.subnetIds[0]),
 		SecurityGroups: []*string{aws.String(b.securityGroup)},
 	})
 

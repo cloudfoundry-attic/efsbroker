@@ -10,6 +10,8 @@ import (
 
 	"os"
 
+	"time"
+
 	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
@@ -18,7 +20,6 @@ import (
 	"code.cloudfoundry.org/lager"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"time"
 )
 
 type dynamicState struct {
@@ -266,7 +267,6 @@ var _ = Describe("Broker", func() {
 			BeforeEach(func() {
 				WriteFileCallCount = 0
 				WriteFileWrote = ""
-
 				instanceID = "some-instance-id"
 				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
@@ -287,10 +287,11 @@ var _ = Describe("Broker", func() {
 				_, err = broker.Provision(instanceID, provisionDetails, asyncAllowed)
 				Expect(err).NotTo(HaveOccurred())
 
-				Eventually(func() brokerapi.LastOperationState {
-					retval, _ := broker.LastOperation(instanceID, "provision")
-					return retval.State
-				}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Succeeded))
+				// Wait for provisioning to finish
+				Eventually(func() int {
+					fakeClock.Increment(time.Second * 10)
+					return fakeEFSService.CreateMountTargetCallCount()
+				}, time.Second*1, time.Millisecond*100).Should(Equal(1))
 			})
 
 			JustBeforeEach(func() {

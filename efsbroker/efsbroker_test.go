@@ -15,6 +15,7 @@ import (
 	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
+	"code.cloudfoundry.org/efsdriver/efsdriverfakes"
 	"code.cloudfoundry.org/goshims/ioutil/ioutil_fake"
 	"code.cloudfoundry.org/goshims/os/os_fake"
 	"code.cloudfoundry.org/lager"
@@ -33,6 +34,7 @@ var _ = Describe("Broker", func() {
 		fakeOs             *os_fake.FakeOs
 		fakeIoutil         *ioutil_fake.FakeIoutil
 		fakeEFSService     *efsfakes.FakeEFSService
+		fakeVolTools       *efsdriverfakes.FakeVolTools
 		fakeClock          *fakeclock.FakeClock
 		logger             lager.Logger
 		WriteFileCallCount int
@@ -45,6 +47,7 @@ var _ = Describe("Broker", func() {
 		fakeIoutil = &ioutil_fake.FakeIoutil{}
 		fakeClock = fakeclock.NewFakeClock(time.Unix(123, 456))
 		fakeEFSService = &efsfakes.FakeEFSService{}
+		fakeVolTools = &efsdriverfakes.FakeVolTools{}
 		fakeIoutil.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
 			WriteFileCallCount++
 			WriteFileWrote = string(data)
@@ -108,6 +111,7 @@ var _ = Describe("Broker", func() {
 				fakeEFSService,
 				[]string{"fake-subnet-id"},
 				"fake-security-group",
+				fakeVolTools,
 			)
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
 				FileSystemId: aws.String("fake-fs-id"),
@@ -119,6 +123,13 @@ var _ = Describe("Broker", func() {
 			}, nil)
 			fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
 				MountTargetId: aws.String("fake-mt-id"),
+			}, nil)
+			fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+				MountTargets: []*efs.MountTargetDescription{{
+					MountTargetId:  aws.String("fake-mt-id"),
+					LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+					IpAddress:      aws.String("1.1.1.1"),
+				}},
 			}, nil)
 		})
 
@@ -277,20 +288,13 @@ var _ = Describe("Broker", func() {
 					FileSystems: []*efs.FileSystemDescription{{LifeCycleState: aws.String(efs.LifeCycleStateAvailable)}},
 				}, nil)
 
-				fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
-					MountTargets: []*efs.MountTargetDescription{{
-						MountTargetId:  aws.String("fake-mt-id"),
-						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-					}},
-				}, nil)
-
 				_, err = broker.Provision(instanceID, provisionDetails, asyncAllowed)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Wait for provisioning to finish
 				Eventually(func() int {
 					fakeClock.Increment(time.Second * 10)
-					return fakeEFSService.CreateMountTargetCallCount()
+					return fakeVolTools.OpenPermsCallCount()
 				}, time.Second*1, time.Millisecond*100).Should(Equal(1))
 			})
 
@@ -305,12 +309,14 @@ var _ = Describe("Broker", func() {
 
 					count := 0
 					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
+						logger.Info("fake-mount-target-info", lager.Data{"count": count})
 						if count == 0 {
 							count++
 							return &efs.DescribeMountTargetsOutput{
 								MountTargets: []*efs.MountTargetDescription{{
 									MountTargetId:  aws.String("fake-mt-id"),
 									LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+									IpAddress:      aws.String("1.1.1.1"),
 								}},
 							}, nil
 						} else if count == 1 {
@@ -319,6 +325,7 @@ var _ = Describe("Broker", func() {
 								MountTargets: []*efs.MountTargetDescription{{
 									MountTargetId:  aws.String("fake-mt-id"),
 									LifeCycleState: aws.String(efs.LifeCycleStateDeleting),
+									IpAddress:      aws.String("1.1.1.1"),
 								}},
 							}, nil
 						} else {
@@ -578,6 +585,7 @@ var _ = Describe("Broker", func() {
 						Expect(err).NotTo(HaveOccurred())
 						Expect(op.State).To(Equal(brokerapi.InProgress))
 					})
+
 				})
 
 				Context("but aws reports the mount target is still creating", func() {
@@ -600,6 +608,7 @@ var _ = Describe("Broker", func() {
 						fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 							MountTargets: []*efs.MountTargetDescription{{
 								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+								IpAddress:      aws.String("1.1.1.1"),
 							}},
 						}, nil)
 					})
@@ -674,13 +683,6 @@ var _ = Describe("Broker", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				bindDetails = brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}}
-
-				fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
-					MountTargets: []*efs.MountTargetDescription{{
-						IpAddress:      aws.String("1.1.1.1"),
-						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-					}},
-				}, nil)
 			})
 
 			It("includes empty credentials to prevent CAPI crash", func() {
@@ -779,13 +781,6 @@ var _ = Describe("Broker", func() {
 			BeforeEach(func() {
 				_, err := broker.Provision("some-instance-id", brokerapi.ProvisionDetails{}, true)
 				Expect(err).NotTo(HaveOccurred())
-
-				fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
-					MountTargets: []*efs.MountTargetDescription{{
-						IpAddress:      aws.String("1.1.1.1"),
-						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-					}},
-				}, nil)
 
 				_, err = broker.Bind("some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
 				Expect(err).NotTo(HaveOccurred())

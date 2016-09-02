@@ -11,15 +11,17 @@ import (
 
 	"sync"
 
+	"path"
+	"strings"
+
 	"code.cloudfoundry.org/clock"
+	"code.cloudfoundry.org/efsdriver/efsvoltools"
 	ioutilshim "code.cloudfoundry.org/goshims/ioutil"
 	osshim "code.cloudfoundry.org/goshims/os"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
-	"path"
-	"strings"
 )
 
 const (
@@ -67,6 +69,7 @@ type broker struct {
 	ioutil        ioutilshim.Ioutil
 	mutex         lock
 	clock         clock.Clock
+	efsTools      efsvoltools.VolTools
 
 	static  staticState
 	dynamic dynamicState
@@ -79,6 +82,7 @@ func New(
 	ioutil ioutilshim.Ioutil,
 	clock clock.Clock,
 	efsService EFSService, subnetIds []string, securityGroup string,
+	efsTools efsvoltools.VolTools,
 ) *broker {
 
 	theBroker := broker{
@@ -91,6 +95,7 @@ func New(
 		securityGroup: securityGroup,
 		mutex:         &sync.Mutex{},
 		clock:         clock,
+		efsTools:      efsTools,
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -174,8 +179,13 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 }
 
 func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
+	logger = logger.Session("create-mount-targets")
+	logger.Info("start")
+	defer logger.Info("end")
+
 	var err error
 
+	// wait for fs to be available
 	state, err := b.getFsStatus(logger, fsID)
 	for state == efs.LifeCycleStateCreating {
 		if err != nil {
@@ -187,6 +197,7 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 		state, err = b.getFsStatus(logger, fsID)
 	}
 
+	// create mount target for that fs
 	logger.Info("creating-mount-targets")
 	_, err = b.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
 		FileSystemId:   aws.String(fsID),
@@ -198,7 +209,25 @@ func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
 		logger.Error("failed-to-create-mounts", err)
 	}
 
+	// wait for mount target to become available
+	state, _ = b.getMountsStatus(logger, fsID)
+	for state != efs.LifeCycleStateAvailable {
+		b.clock.Sleep(PollingInterval)
+		state, _ = b.getMountsStatus(logger, fsID)
+	}
 	logger.Info("created-mount-targets")
+
+	// open up permissions on the new filesystem
+	ip, err := b.getMountIp(fsID)
+	if err != nil {
+		logger.Error("failed-to-get-mount-address", err)
+	}
+	opts := map[string]interface{}{"ip": ip}
+
+	resp := b.efsTools.OpenPerms(logger, efsvoltools.OpenPermsRequest{Name: fsID, Opts: opts})
+	if resp.Err != "" {
+		logger.Error("failed-to-open-mount-permissions", errors.New(resp.Err))
+	}
 }
 
 func planIDToPerformanceMode(planID string) *string {
@@ -251,7 +280,6 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 	logger.Info("++++++++++++++++++++++++++mount target deleted++++++++++++++++++++++++")
 
 	state, _ := b.getMountsStatus(logger, fsID)
-
 	for state != efs.LifeCycleStateDeleted && state != "" {
 		b.clock.Sleep(PollingInterval)
 		state, _ = b.getMountsStatus(logger, fsID)
@@ -350,26 +378,11 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 
 	b.dynamic.BindingMap[bindingID] = details
 
-	// get mount point details from ews to return in bind response
-	mtOutput, err := b.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
-		FileSystemId: aws.String(fs.EfsId),
-	})
+	ip, err := b.getMountIp(fs.EfsId)
 	if err != nil {
-		logger.Error("err-getting-mount-target-status", err)
 		return brokerapi.Binding{}, err
 	}
-	if len(mtOutput.MountTargets) < 1 {
-		logger.Error("found-no-mount-targets", ErrNoMountTargets)
-		return brokerapi.Binding{}, ErrNoMountTargets
-	}
-
-	if mtOutput.MountTargets[0].LifeCycleState == nil ||
-		*mtOutput.MountTargets[0].LifeCycleState != efs.LifeCycleStateAvailable {
-		logger.Error("mount-point-unavailable", ErrMountTargetUnavailable)
-		return brokerapi.Binding{}, ErrMountTargetUnavailable
-	}
-
-	mountConfig := "{\"ip\": \"" + *mtOutput.MountTargets[0].IpAddress + "\"}"
+	mountConfig := "{\"ip\": \"" + ip + "\"}"
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response
@@ -384,6 +397,31 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 			},
 		}},
 	}, nil
+}
+
+func (b *broker) getMountIp(fsId string) (string, error) {
+	// get mount point details from ews to return in bind response
+	mtOutput, err := b.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
+		FileSystemId: aws.String(fsId),
+	})
+	if err != nil {
+		b.logger.Error("err-getting-mount-target-status", err)
+		return "", err
+	}
+	if len(mtOutput.MountTargets) < 1 {
+		b.logger.Error("found-no-mount-targets", ErrNoMountTargets)
+		return "", ErrNoMountTargets
+	}
+
+	if mtOutput.MountTargets[0].LifeCycleState == nil ||
+		*mtOutput.MountTargets[0].LifeCycleState != efs.LifeCycleStateAvailable {
+		b.logger.Error("mount-point-unavailable", ErrMountTargetUnavailable)
+		return "", ErrMountTargetUnavailable
+	}
+
+	mountConfig := *mtOutput.MountTargets[0].IpAddress
+
+	return mountConfig, nil
 }
 
 func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.UnbindDetails) error {

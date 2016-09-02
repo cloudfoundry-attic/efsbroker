@@ -14,7 +14,8 @@ import (
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/utils"
-	"code.cloudfoundry.org/goshims/ioutil"
+	"code.cloudfoundry.org/efsdriver/efsvoltools/voltoolshttp"
+	ioutilshim "code.cloudfoundry.org/goshims/ioutil"
 	"code.cloudfoundry.org/goshims/os"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
@@ -36,6 +37,11 @@ var atAddress = flag.String(
 	"listenAddr",
 	"0.0.0.0:8999",
 	"host:port to serve service broker API",
+)
+var efsToolsAddress = flag.String(
+	"efsToolsAddress",
+	"127.0.0.1:7090",
+	"host:port to reach the efsdriver when creating volumes",
 )
 var serviceName = flag.String(
 	"serviceName",
@@ -140,11 +146,16 @@ func createServer(logger lager.Logger) ifrit.Runner {
 
 	efsClient := efs.New(session, config)
 
+	efsTools, err := voltoolshttp.NewRemoteClient("http://" + *efsToolsAddress)
+	if err != nil {
+		panic(err)
+	}
+
 	serviceBroker := efsbroker.New(logger,
 		*serviceName, *serviceId,
 		*planName, *planId, *planDesc,
 		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, clock.NewClock(),
-		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup)
+		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup, efsTools)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

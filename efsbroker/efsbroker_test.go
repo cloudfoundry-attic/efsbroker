@@ -113,6 +113,7 @@ var _ = Describe("Broker", func() {
 				"fake-security-group",
 				fakeVolTools,
 			)
+
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
 				FileSystemId: aws.String("fake-fs-id"),
 			}, nil)

@@ -70,6 +70,7 @@ type broker struct {
 	mutex         lock
 	clock         clock.Clock
 	efsTools      efsvoltools.VolTools
+	WatcherThread func(logger lager.Logger, fsID string)
 
 	static  staticState
 	dynamic dynamicState
@@ -109,6 +110,7 @@ func New(
 		},
 	}
 
+	theBroker.WatcherThread = theBroker.createMountTargets
 	// theBroker.restoreDynamicState()
 
 	return &theBroker
@@ -173,7 +175,7 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId, false}
 
-	go b.createMountTargets(logger, *fsDescriptor.FileSystemId)
+	go b.WatcherThread(logger, *fsDescriptor.FileSystemId)
 
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true, OperationData: "provision"}, nil
 }

@@ -103,8 +103,7 @@ var _ = Describe("Broker", func() {
 		BeforeEach(func() {
 			broker = efsbroker.New(
 				logger,
-				"service-name", "service-id",
-				"plan-name", "plan-id", "plan-desc", "/fake-dir",
+				"service-name", "service-id", "/fake-dir",
 				fakeOs,
 				fakeIoutil,
 				fakeClock,

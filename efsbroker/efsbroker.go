@@ -38,9 +38,6 @@ var (
 type staticState struct {
 	ServiceName string `json:"ServiceName"`
 	ServiceId   string `json:"ServiceId"`
-	PlanName    string `json:"PlanName"`
-	PlanId      string `json:"PlanId"`
-	PlanDesc    string `json:"PlanDesc"`
 }
 
 type EFSInstance struct {
@@ -78,7 +75,7 @@ type broker struct {
 
 func New(
 	logger lager.Logger,
-	serviceName, serviceId, planName, planId, planDesc, dataDir string,
+	serviceName, serviceId, dataDir string,
 	os osshim.Os,
 	ioutil ioutilshim.Ioutil,
 	clock clock.Clock,
@@ -100,9 +97,6 @@ func New(
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
-			PlanName:    planName,
-			PlanId:      planId,
-			PlanDesc:    planDesc,
 		},
 		dynamic: dynamicState{
 			InstanceMap: map[string]EFSInstance{},

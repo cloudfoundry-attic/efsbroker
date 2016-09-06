@@ -184,9 +184,6 @@ var _ = Describe("Efsbroker Main", func() {
 			BeforeEach(func() {
 				args = append(args, "-serviceName", "something")
 				args = append(args, "-serviceId", "someguid")
-				args = append(args, "-planName", "some name")
-				args = append(args, "-planId", "some other guid")
-				args = append(args, "-planDesc", "a description")
 			})
 
 			It("should pass arguments though to catalog", func() {

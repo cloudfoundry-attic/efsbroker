@@ -53,21 +53,6 @@ var serviceId = flag.String(
 	"service-guid",
 	"ID of the service to register with cloud controller",
 )
-var planName = flag.String(
-	"planName",
-	"free",
-	"name of the service plan to register with cloud controller",
-)
-var planId = flag.String(
-	"planId",
-	"free-plan-guid",
-	"ID of the service plan to register with cloud controller",
-)
-var planDesc = flag.String(
-	"planDesc",
-	"free efs filesystem",
-	"description of the service plan to register with cloud controller",
-)
 var username = flag.String(
 	"username",
 	"admin",
@@ -153,7 +138,6 @@ func createServer(logger lager.Logger) ifrit.Runner {
 
 	serviceBroker := efsbroker.New(logger,
 		*serviceName, *serviceId,
-		*planName, *planId, *planDesc,
 		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, clock.NewClock(),
 		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup, efsTools)
 

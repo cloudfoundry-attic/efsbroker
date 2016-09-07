@@ -67,7 +67,7 @@ type broker struct {
 	mutex              lock
 	clock              clock.Clock
 	efsTools           efsvoltools.VolTools
-	ProvisionOperation func(underlying *broker, logger lager.Logger, fsID string) Operation
+	ProvisionOperation func(underlying interface{}, logger lager.Logger, fsID string) Operation
 
 	static  staticState
 	dynamic dynamicState
@@ -81,19 +81,21 @@ func New(
 	clock clock.Clock,
 	efsService EFSService, subnetIds []string, securityGroup string,
 	efsTools efsvoltools.VolTools,
+	provisionOperation func(underlying interface{}, logger lager.Logger, fsID string) Operation,
 ) *broker {
 
 	theBroker := broker{
-		logger:        logger,
-		dataDir:       dataDir,
-		os:            os,
-		ioutil:        ioutil,
-		efsService:    efsService,
-		subnetIds:     subnetIds,
-		securityGroup: securityGroup,
-		mutex:         &sync.Mutex{},
-		clock:         clock,
-		efsTools:      efsTools,
+		logger:             logger,
+		dataDir:            dataDir,
+		os:                 os,
+		ioutil:             ioutil,
+		efsService:         efsService,
+		subnetIds:          subnetIds,
+		securityGroup:      securityGroup,
+		mutex:              &sync.Mutex{},
+		clock:              clock,
+		efsTools:           efsTools,
+		ProvisionOperation: provisionOperation,
 		static: staticState{
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
@@ -104,7 +106,6 @@ func New(
 		},
 	}
 
-	theBroker.ProvisionOperation = NewProvisionOperation
 	// theBroker.restoreDynamicState()
 
 	return &theBroker

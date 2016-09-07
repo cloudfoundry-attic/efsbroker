@@ -57,17 +57,17 @@ type lock interface {
 }
 
 type broker struct {
-	logger        lager.Logger
-	efsService    EFSService
-	subnetIds     []string
-	securityGroup string
-	dataDir       string
-	os            osshim.Os
-	ioutil        ioutilshim.Ioutil
-	mutex         lock
-	clock         clock.Clock
-	efsTools      efsvoltools.VolTools
-	WatcherThread func(logger lager.Logger, fsID string)
+	logger             lager.Logger
+	efsService         EFSService
+	subnetIds          []string
+	securityGroup      string
+	dataDir            string
+	os                 osshim.Os
+	ioutil             ioutilshim.Ioutil
+	mutex              lock
+	clock              clock.Clock
+	efsTools           efsvoltools.VolTools
+	ProvisionOperation func(underlying *broker, logger lager.Logger, fsID string) Operation
 
 	static  staticState
 	dynamic dynamicState
@@ -104,7 +104,7 @@ func New(
 		},
 	}
 
-	theBroker.WatcherThread = theBroker.createMountTargets
+	theBroker.ProvisionOperation = NewProvisionOperation
 	// theBroker.restoreDynamicState()
 
 	return &theBroker
@@ -169,7 +169,9 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 
 	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId, false}
 
-	go b.WatcherThread(logger, *fsDescriptor.FileSystemId)
+	operation := b.ProvisionOperation(b, logger, *fsDescriptor.FileSystemId)
+
+	go operation.Execute()
 
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true, OperationData: "provision"}, nil
 }

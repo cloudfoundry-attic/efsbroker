@@ -42,8 +42,9 @@ type staticState struct {
 
 type EFSInstance struct {
 	brokerapi.ProvisionDetails
-	EfsId string `json:"EfsId"`
-	err   bool
+	EfsId   string `json:"EfsId"`
+	FsState string
+	Err     error
 }
 
 type dynamicState struct {
@@ -67,7 +68,7 @@ type broker struct {
 	mutex              lock
 	clock              clock.Clock
 	efsTools           efsvoltools.VolTools
-	ProvisionOperation func(underlying interface{}, logger lager.Logger, fsID string) Operation
+	ProvisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation
 
 	static  staticState
 	dynamic dynamicState
@@ -81,7 +82,7 @@ func New(
 	clock clock.Clock,
 	efsService EFSService, subnetIds []string, securityGroup string,
 	efsTools efsvoltools.VolTools,
-	provisionOperation func(underlying interface{}, logger lager.Logger, fsID string) Operation,
+	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation,
 ) *broker {
 
 	theBroker := broker{
@@ -147,8 +148,6 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	defer b.persist(b.dynamic)
-
 	if !asyncAllowed {
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrAsyncRequired
 	}
@@ -157,24 +156,29 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
 	}
 
-	logger.Info("creating-efs")
-	fsDescriptor, err := b.efsService.CreateFileSystem(&efs.CreateFileSystemInput{
-		CreationToken:   aws.String(instanceID),
-		PerformanceMode: planIDToPerformanceMode(details.PlanID),
-	})
+	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, "", "", nil}
 
-	if err != nil {
-		logger.Error("failed-to-create-fs", err)
-		return brokerapi.ProvisionedServiceSpec{}, err
-	}
-
-	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, *fsDescriptor.FileSystemId, false}
-
-	operation := b.ProvisionOperation(b, logger, *fsDescriptor.FileSystemId)
+	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnetIds, b.securityGroup, b.clock, b.provisionEvent)
 
 	go operation.Execute()
 
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true, OperationData: "provision"}, nil
+}
+
+//callbacks
+func (b *broker) provisionEvent(opState *OperationState) {
+	logger := b.logger.Session("provision-event").WithData(lager.Data{"state": opState})
+	logger.Info("start")
+	defer logger.Info("end")
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	defer b.persist(b.dynamic)
+
+	efsInstance := b.dynamic.InstanceMap[opState.InstanceID]
+	efsInstance.EfsId = opState.FsID
+	efsInstance.FsState = opState.FsState
+	efsInstance.Err = opState.Err
 }
 
 func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
@@ -260,7 +264,7 @@ func (b *broker) setErrorOnInstance(instanceId string, err error) {
 
 	instance, instanceExists := b.dynamic.InstanceMap[instanceId]
 	if instanceExists {
-		instance.err = true
+		instance.Err = err
 		b.dynamic.InstanceMap[instanceId] = instance
 	}
 	return
@@ -465,18 +469,17 @@ func (b *broker) LastOperation(instanceID string, operationData string) (brokera
 			return brokerapi.LastOperation{}, brokerapi.ErrInstanceDoesNotExist
 		}
 
-		status, err := b.getStatus(logger, instance.EfsId)
-		if err != nil {
-			return brokerapi.LastOperation{}, err
+		if instance.Err != nil {
+			return brokerapi.LastOperation{}, instance.Err
 		}
 
-		return awsStateToLastOperation(status), nil
+		return awsStateToLastOperation(instance.FsState), nil
 	case "deprovision":
 		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
 		if !instanceExists {
 			return brokerapi.LastOperation{State: brokerapi.Succeeded}, nil
 		} else {
-			if instance.err {
+			if instance.Err != nil {
 				return brokerapi.LastOperation{State: brokerapi.Failed}, nil
 			} else {
 				return brokerapi.LastOperation{State: brokerapi.InProgress}, nil

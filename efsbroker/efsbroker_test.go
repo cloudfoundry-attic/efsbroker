@@ -28,6 +28,8 @@ type dynamicState struct {
 	BindingMap  map[string]brokerapi.BindDetails
 }
 
+var AnErr = errors.New("bad create fs")
+
 var _ = Describe("Broker", func() {
 	var (
 		broker             brokerapi.ServiceBroker
@@ -111,6 +113,7 @@ var _ = Describe("Broker", func() {
 				[]string{"fake-subnet-id"},
 				"fake-security-group",
 				fakeVolTools,
+				efsbroker.NewProvisionOperation,
 			)
 
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
@@ -118,7 +121,8 @@ var _ = Describe("Broker", func() {
 			}, nil)
 			fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
 				FileSystems: []*efs.FileSystemDescription{{
-					FileSystemId: aws.String("fake-fs-id"),
+					FileSystemId:   aws.String("fake-fs-id"),
+					LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
 				}},
 			}, nil)
 			fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
@@ -185,22 +189,29 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("creates new file system in efs", func() {
-				Expect(fakeEFSService.CreateFileSystemCallCount()).To(Equal(1))
+				Eventually(func() int {
+					return fakeEFSService.CreateFileSystemCallCount()
+				}, time.Second*1, time.Millisecond*100).Should(Equal(1))
+
 				input := fakeEFSService.CreateFileSystemArgsForCall(0)
 				Expect(*input.PerformanceMode).To(Equal("generalPurpose"))
 				Expect(*input.CreationToken).To(Equal("some-instance-id"))
 			})
 
 			It("eventually creates a mount target in efs", func() {
-				Eventually(fakeEFSService.CreateMountTargetCallCount).Should(Equal(1))
+				Eventually(func() int {
+					return fakeEFSService.CreateMountTargetCallCount()
+				}, time.Second*1, time.Millisecond*100).Should(Equal(1))
+
 				input := fakeEFSService.CreateMountTargetArgsForCall(0)
 				Expect(*input.FileSystemId).To(Equal("fake-fs-id"))
 				Expect(*input.SubnetId).To(Equal("fake-subnet-id"))
 			})
 
 			It("should write state", func() {
-				Expect(WriteFileCallCount).To(Equal(1))
-				Expect(WriteFileWrote).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"generalPurpose","organization_guid":"","space_guid":"","EfsId":"fake-fs-id"}},"BindingMap":{}}`))
+				Eventually(func() string {
+					return WriteFileWrote
+				}, time.Second*1, time.Millisecond*100).Should(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"generalPurpose","organization_guid":"","space_guid":"","EfsId":"","FsState":"","Err":null}},"BindingMap":{}}`))
 			})
 
 			Context("with maxIO", func() {
@@ -209,18 +220,27 @@ var _ = Describe("Broker", func() {
 				})
 
 				It("should provision the service instance with maxIO", func() {
-					input := fakeEFSService.CreateFileSystemArgsForCall(0)
-					Expect(*input.PerformanceMode).To(Equal("maxIO"))
+					Eventually(func() string {
+						if fakeEFSService.CreateFileSystemCallCount() > 0 {
+							input := fakeEFSService.CreateFileSystemArgsForCall(0)
+							return *input.PerformanceMode
+						}
+						return ""
+					}, time.Second*1, time.Millisecond*100).Should(Equal("maxIO"))
 				})
 			})
 
 			Context("when creating the efs errors", func() {
+
 				BeforeEach(func() {
-					fakeEFSService.CreateFileSystemReturns(nil, errors.New("bad create fs"))
+					fakeEFSService.CreateFileSystemReturns(nil, AnErr)
 				})
 
 				It("errors", func() {
-					Expect(err).To(HaveOccurred())
+					Eventually(func() brokerapi.LastOperationState {
+						retval, _ := broker.LastOperation(instanceID, "provision")
+						return retval.State
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Failed))
 				})
 			})
 
@@ -238,8 +258,11 @@ var _ = Describe("Broker", func() {
 					fakeEFSService.CreateMountTargetReturns(nil, errors.New("badness"))
 				})
 
-				It("does not error", func() {
-					Expect(err).NotTo(HaveOccurred())
+				It("should eventually report failure", func() {
+					Eventually(func() brokerapi.LastOperationState {
+						retval, _ := broker.LastOperation(instanceID, "provision")
+						return retval.State
+					}, time.Second*1, time.Millisecond*100).Should(Equal(brokerapi.Failed))
 				})
 			})
 

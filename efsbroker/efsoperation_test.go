@@ -90,7 +90,7 @@ var _ = Describe("Operation", func() {
 
 	Context(".Start", func() {
 		JustBeforeEach(func() {
-			provisionOp.Start()
+			provisionOp.CreateFs()
 		})
 		Context("when amazon's create file system returns ok", func() {
 			BeforeEach(func() {
@@ -99,7 +99,7 @@ var _ = Describe("Operation", func() {
 				}, nil)
 			})
 			It("should move to check-for-fs state when amazon fails to acknowledge", func() {
-				Expect(provisionOp.State()).To(BeState(provisionOp.CheckForFs))
+				Expect(provisionOp.State()).To(BeState(provisionOp.CheckFs))
 				Expect(operationState.FsID).To(ContainSubstring(*filesystemID))
 			})
 		})
@@ -132,7 +132,7 @@ var _ = Describe("Operation", func() {
 
 	Context(".CheckFS", func() {
 		JustBeforeEach(func() {
-			provisionOp.CheckForFs()
+			provisionOp.CheckFs()
 		})
 		Context("when amazon's describe file system returns creating", func() {
 			BeforeEach(func() {
@@ -145,7 +145,7 @@ var _ = Describe("Operation", func() {
 			})
 			It("should sleep and remain in check-for-fs state", func() {
 				provisionOp.Sleep()
-				Expect(provisionOp.State()).To(BeState(provisionOp.CheckForFs))
+				Expect(provisionOp.State()).To(BeState(provisionOp.CheckFs))
 				Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateCreating))
 				Expect(operationState.Err).To(BeNil())
 			})
@@ -176,7 +176,7 @@ var _ = Describe("Operation", func() {
 			})
 			It("should sleep and remain in check fs state", func() {
 				provisionOp.Sleep()
-				Expect(provisionOp.State()).To(BeState(provisionOp.CheckForFs))
+				Expect(provisionOp.State()).To(BeState(provisionOp.CheckFs))
 				Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateDeleted))
 				Expect(operationState.Err).To(BeNil())
 			})

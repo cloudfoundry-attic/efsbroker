@@ -42,9 +42,12 @@ type staticState struct {
 
 type EFSInstance struct {
 	brokerapi.ProvisionDetails
-	EfsId   string `json:"EfsId"`
-	FsState string
-	Err     error
+	EfsId      string `json:"EfsId"`
+	FsState    string `json:"FsState"`
+	MountId    string `json:"MountId"`
+	MountState string `json:"MountState"`
+	MountIp    string `json:"MountIp"`
+	Err        error  `json:"Err"`
 }
 
 type dynamicState struct {
@@ -57,7 +60,7 @@ type lock interface {
 	Unlock()
 }
 
-type broker struct {
+type Broker struct {
 	logger             lager.Logger
 	efsService         EFSService
 	subnetIds          []string
@@ -83,9 +86,9 @@ func New(
 	efsService EFSService, subnetIds []string, securityGroup string,
 	efsTools efsvoltools.VolTools,
 	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation,
-) *broker {
+) *Broker {
 
-	theBroker := broker{
+	theBroker := Broker{
 		logger:             logger,
 		dataDir:            dataDir,
 		os:                 os,
@@ -112,7 +115,7 @@ func New(
 	return &theBroker
 }
 
-func (b *broker) Services() []brokerapi.Service {
+func (b *Broker) Services() []brokerapi.Service {
 	logger := b.logger.Session("services")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -140,7 +143,7 @@ func (b *broker) Services() []brokerapi.Service {
 	}}
 }
 
-func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
+func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
 	logger := b.logger.Session("provision").WithData(lager.Data{"instanceID": instanceID})
 	logger.Info("start")
 	defer logger.Info("end")
@@ -156,9 +159,9 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
 	}
 
-	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, "", "", nil}
+	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, "", "", "", "", "", nil}
 
-	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnetIds, b.securityGroup, b.clock, b.provisionEvent)
+	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnetIds, b.securityGroup, b.clock, b.ProvisionEvent)
 
 	go operation.Execute()
 
@@ -166,7 +169,7 @@ func (b *broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 }
 
 //callbacks
-func (b *broker) provisionEvent(opState *OperationState) {
+func (b *Broker) ProvisionEvent(opState *OperationState) {
 	logger := b.logger.Session("provision-event").WithData(lager.Data{"state": opState})
 	logger.Info("start")
 	defer logger.Info("end")
@@ -178,69 +181,66 @@ func (b *broker) provisionEvent(opState *OperationState) {
 	efsInstance := b.dynamic.InstanceMap[opState.InstanceID]
 	efsInstance.EfsId = opState.FsID
 	efsInstance.FsState = opState.FsState
+	efsInstance.MountId = opState.MountTargetID
+	efsInstance.MountIp = opState.MountTargetIp
+	efsInstance.MountState = opState.MountTargetState
 	efsInstance.Err = opState.Err
+	b.dynamic.InstanceMap[opState.InstanceID] = efsInstance
 }
 
-func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
-	logger = logger.Session("create-mount-targets")
-	logger.Info("start")
-	defer logger.Info("end")
+//func (b *broker) createMountTargets(logger lager.Logger, fsID string) {
+//	logger = logger.Session("create-mount-targets")
+//	logger.Info("start")
+//	defer logger.Info("end")
+//
+//	var err error
+//
+//	// wait for fs to be available
+//	state, err := b.getFsStatus(logger, fsID)
+//	for state == efs.LifeCycleStateCreating {
+//		if err != nil {
+//			logger.Error("failed-to-get-fs-status", err)
+//			continue
+//		}
+//
+//		b.clock.Sleep(PollingInterval)
+//		state, err = b.getFsStatus(logger, fsID)
+//	}
+//
+//	// create mount target for that fs
+//	logger.Info("creating-mount-targets")
+//	_, err = b.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
+//		FileSystemId:   aws.String(fsID),
+//		SubnetId:       aws.String(b.subnetIds[0]),
+//		SecurityGroups: []*string{aws.String(b.securityGroup)},
+//	})
+//
+//	if err != nil {
+//		logger.Error("failed-to-create-mounts", err)
+//	}
+//
+//	// wait for mount target to become available
+//	state, _ = b.getMountsStatus(logger, fsID)
+//	for state != efs.LifeCycleStateAvailable {
+//		b.clock.Sleep(PollingInterval)
+//		state, _ = b.getMountsStatus(logger, fsID)
+//	}
+//	logger.Info("created-mount-targets")
+//
+//	// open up permissions on the new filesystem
+//	ip, err := b.getMountIp(fsID)
+//	if err != nil {
+//		logger.Error("failed-to-get-mount-address", err)
+//	}
+//	opts := map[string]interface{}{"ip": ip}
+//
+//	resp := b.efsTools.OpenPerms(logger, efsvoltools.OpenPermsRequest{Name: fsID, Opts: opts})
+//	if resp.Err != "" {
+//		logger.Error("failed-to-open-mount-permissions", errors.New(resp.Err))
+//	}
+//}
 
-	var err error
-
-	// wait for fs to be available
-	state, err := b.getFsStatus(logger, fsID)
-	for state == efs.LifeCycleStateCreating {
-		if err != nil {
-			logger.Error("failed-to-get-fs-status", err)
-			continue
-		}
-
-		b.clock.Sleep(PollingInterval)
-		state, err = b.getFsStatus(logger, fsID)
-	}
-
-	// create mount target for that fs
-	logger.Info("creating-mount-targets")
-	_, err = b.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
-		FileSystemId:   aws.String(fsID),
-		SubnetId:       aws.String(b.subnetIds[0]),
-		SecurityGroups: []*string{aws.String(b.securityGroup)},
-	})
-
-	if err != nil {
-		logger.Error("failed-to-create-mounts", err)
-	}
-
-	// wait for mount target to become available
-	state, _ = b.getMountsStatus(logger, fsID)
-	for state != efs.LifeCycleStateAvailable {
-		b.clock.Sleep(PollingInterval)
-		state, _ = b.getMountsStatus(logger, fsID)
-	}
-	logger.Info("created-mount-targets")
-
-	// open up permissions on the new filesystem
-	ip, err := b.getMountIp(fsID)
-	if err != nil {
-		logger.Error("failed-to-get-mount-address", err)
-	}
-	opts := map[string]interface{}{"ip": ip}
-
-	resp := b.efsTools.OpenPerms(logger, efsvoltools.OpenPermsRequest{Name: fsID, Opts: opts})
-	if resp.Err != "" {
-		logger.Error("failed-to-open-mount-permissions", errors.New(resp.Err))
-	}
-}
-
-func planIDToPerformanceMode(planID string) *string {
-	if planID == "maxIO" {
-		return aws.String(efs.PerformanceModeMaxIo)
-	}
-	return aws.String(efs.PerformanceModeGeneralPurpose)
-}
-
-func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
+func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
 	logger := b.logger.Session("deprovision")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -258,7 +258,7 @@ func (b *broker) Deprovision(instanceID string, details brokerapi.DeprovisionDet
 	return brokerapi.DeprovisionServiceSpec{IsAsync: true, OperationData: "deprovision"}, nil
 }
 
-func (b *broker) setErrorOnInstance(instanceId string, err error) {
+func (b *Broker) setErrorOnInstance(instanceId string, err error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -270,7 +270,7 @@ func (b *broker) setErrorOnInstance(instanceId string, err error) {
 	return
 }
 
-func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string) {
+func (b *Broker) deprovision(logger lager.Logger, fsID string, instanceId string) {
 	logger = logger.Session("deprovision-impl")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -319,7 +319,7 @@ func (b *broker) deprovision(logger lager.Logger, fsID string, instanceId string
 	return
 }
 
-func (b *broker) deleteMountTargets(logger lager.Logger, fsId string) error {
+func (b *Broker) deleteMountTargets(logger lager.Logger, fsId string) error {
 	logger.Info("describing-mount-targets")
 	out, err := b.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 		FileSystemId: aws.String(fsId),
@@ -351,7 +351,7 @@ func (b *broker) deleteMountTargets(logger lager.Logger, fsId string) error {
 	return nil
 }
 
-func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
+func (b *Broker) Bind(instanceID string, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
 	logger := b.logger.Session("bind")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -402,7 +402,7 @@ func (b *broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 	}, nil
 }
 
-func (b *broker) getMountIp(fsId string) (string, error) {
+func (b *Broker) getMountIp(fsId string) (string, error) {
 	// get mount point details from ews to return in bind response
 	mtOutput, err := b.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 		FileSystemId: aws.String(fsId),
@@ -427,7 +427,7 @@ func (b *broker) getMountIp(fsId string) (string, error) {
 	return mountConfig, nil
 }
 
-func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.UnbindDetails) error {
+func (b *Broker) Unbind(instanceID string, bindingID string, details brokerapi.UnbindDetails) error {
 	logger := b.logger.Session("unbind")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -450,11 +450,11 @@ func (b *broker) Unbind(instanceID string, bindingID string, details brokerapi.U
 	return nil
 }
 
-func (b *broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
+func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
 	panic("not implemented")
 }
 
-func (b *broker) LastOperation(instanceID string, operationData string) (brokerapi.LastOperation, error) {
+func (b *Broker) LastOperation(instanceID string, operationData string) (brokerapi.LastOperation, error) {
 	logger := b.logger.Session("last-operation").WithData(lager.Data{"instanceID": instanceID})
 	logger.Info("start")
 	defer logger.Info("end")
@@ -466,14 +466,17 @@ func (b *broker) LastOperation(instanceID string, operationData string) (brokera
 	case "provision":
 		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
 		if !instanceExists {
+			logger.Info("instance-not-found")
 			return brokerapi.LastOperation{}, brokerapi.ErrInstanceDoesNotExist
 		}
 
 		if instance.Err != nil {
+			logger.Info("last-operation-error")
 			return brokerapi.LastOperation{}, instance.Err
 		}
 
-		return awsStateToLastOperation(instance.FsState), nil
+		logger.Debug(fmt.Sprintf("Instance data %#v", instance))
+		return stateToLastOperation(instance), nil
 	case "deprovision":
 		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
 		if !instanceExists {
@@ -490,7 +493,7 @@ func (b *broker) LastOperation(instanceID string, operationData string) (brokera
 	}
 }
 
-func (b *broker) getStatus(logger lager.Logger, fsId string) (string, error) {
+func (b *Broker) getStatus(logger lager.Logger, fsId string) (string, error) {
 	logger = logger.Session("getting-status", lager.Data{"fsId": fsId})
 	logger.Info("start")
 	defer logger.Info("end")
@@ -514,7 +517,7 @@ func (b *broker) getStatus(logger lager.Logger, fsId string) (string, error) {
 	return mtStatus, nil
 }
 
-func (b *broker) getFsStatus(logger lager.Logger, fsId string) (string, error) {
+func (b *Broker) getFsStatus(logger lager.Logger, fsId string) (string, error) {
 	output, err := b.efsService.DescribeFileSystems(&efs.DescribeFileSystemsInput{
 		FileSystemId: aws.String(fsId),
 	})
@@ -532,7 +535,7 @@ func (b *broker) getFsStatus(logger lager.Logger, fsId string) (string, error) {
 	return *output.FileSystems[0].LifeCycleState, nil
 }
 
-func (b *broker) getMountsStatus(logger lager.Logger, fsId string) (string, error) {
+func (b *Broker) getMountsStatus(logger lager.Logger, fsId string) (string, error) {
 	mtOutput, err := b.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 		FileSystemId: aws.String(fsId),
 	})
@@ -560,13 +563,71 @@ func awsStateToLastOperation(state string) brokerapi.LastOperation {
 	}
 }
 
-func (b *broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceID string) bool {
+func stateToLastOperation(instance EFSInstance) brokerapi.LastOperation {
+	switch instance.FsState {
+	case efs.LifeCycleStateCreating:
+		return brokerapi.LastOperation{State: brokerapi.InProgress}
+	case efs.LifeCycleStateAvailable:
+
+		switch instance.MountState {
+		case efs.LifeCycleStateCreating:
+			return brokerapi.LastOperation{State: brokerapi.InProgress}
+		case efs.LifeCycleStateAvailable:
+			return brokerapi.LastOperation{State: brokerapi.Succeeded}
+		default:
+			return brokerapi.LastOperation{State: brokerapi.Failed}
+		}
+
+	default:
+		return brokerapi.LastOperation{State: brokerapi.Failed}
+	}
+}
+
+func (b *Broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceID string) bool {
 	if existing, ok := b.dynamic.InstanceMap[instanceID]; ok {
 		if !reflect.DeepEqual(details, existing) {
 			return true
 		}
 	}
 	return false
+}
+
+func (b *Broker) bindingConflicts(bindingID string, details brokerapi.BindDetails) bool {
+	if existing, ok := b.dynamic.BindingMap[bindingID]; ok {
+		if !reflect.DeepEqual(details, existing) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *Broker) persist(state interface{}) {
+	logger := b.logger.Session("serialize-state")
+	logger.Info("start")
+	defer logger.Info("end")
+
+	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
+
+	stateData, err := json.Marshal(state)
+	if err != nil {
+		b.logger.Error("failed-to-marshall-state", err)
+		return
+	}
+
+	err = b.ioutil.WriteFile(stateFile, stateData, os.ModePerm)
+	if err != nil {
+		b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
+		return
+	}
+
+	logger.Info("state-saved", lager.Data{"state-file": stateFile})
+}
+
+func planIDToPerformanceMode(planID string) *string {
+	if planID == "maxIO" {
+		return aws.String(efs.PerformanceModeMaxIo)
+	}
+	return aws.String(efs.PerformanceModeGeneralPurpose)
 }
 
 func evaluateContainerPath(parameters map[string]interface{}, volId string) string {
@@ -594,37 +655,6 @@ func readOnlyToMode(ro bool) string {
 		return "r"
 	}
 	return "rw"
-}
-
-func (b *broker) bindingConflicts(bindingID string, details brokerapi.BindDetails) bool {
-	if existing, ok := b.dynamic.BindingMap[bindingID]; ok {
-		if !reflect.DeepEqual(details, existing) {
-			return true
-		}
-	}
-	return false
-}
-
-func (b *broker) persist(state interface{}) {
-	logger := b.logger.Session("serialize-state")
-	logger.Info("start")
-	defer logger.Info("end")
-
-	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-
-	stateData, err := json.Marshal(state)
-	if err != nil {
-		b.logger.Error("failed-to-marshall-state", err)
-		return
-	}
-
-	err = b.ioutil.WriteFile(stateFile, stateData, os.ModePerm)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
-		return
-	}
-
-	logger.Info("state-saved", lager.Data{"state-file": stateFile})
 }
 
 // func (b *broker) restoreDynamicState() {

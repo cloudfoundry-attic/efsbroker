@@ -47,13 +47,7 @@ func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID str
 		securityGroup,
 		logger,
 		clock,
-		&OperationState{
-			InstanceID:       instanceID,
-			FsID:             "",
-			FsState:          "",
-			MountTargetID:    "",
-			MountTargetState: "",
-			Err:              nil},
+		&OperationState{InstanceID: instanceID},
 		updateCb,
 		nil,
 		nil,
@@ -78,7 +72,7 @@ func (o *ProvisionOperationStateMachine) Execute() {
 	logger := o.logger.Session("execute")
 	defer logger.Info("end")
 
-	o.nextState = o.Start
+	o.nextState = o.CreateFs
 	for o.State() != nil {
 		o.State()()
 	}
@@ -88,7 +82,7 @@ func (o *ProvisionOperationStateMachine) State() func() {
 	return o.nextState
 }
 
-func (o *ProvisionOperationStateMachine) Start() {
+func (o *ProvisionOperationStateMachine) CreateFs() {
 	logger := o.logger.Session("provision-state-start")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -108,10 +102,10 @@ func (o *ProvisionOperationStateMachine) Start() {
 		return
 	}
 	o.state.FsID = *fsDescriptor.FileSystemId
-	o.nextState = o.CheckForFs
+	o.nextState = o.CheckFs
 }
 
-func (o *ProvisionOperationStateMachine) CheckForFs() {
+func (o *ProvisionOperationStateMachine) CheckFs() {
 	logger := o.logger.Session("provision-state-check-fs")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -139,6 +133,7 @@ func (o *ProvisionOperationStateMachine) CheckForFs() {
 		return
 	}
 
+	logger.Debug(fmt.Sprintf("Setting fs state to '%s'", *output.FileSystems[0].LifeCycleState))
 	o.state.FsState = *output.FileSystems[0].LifeCycleState
 
 	switch o.state.FsState {
@@ -146,7 +141,7 @@ func (o *ProvisionOperationStateMachine) CheckForFs() {
 		o.nextState = o.CreateMountTarget
 		return
 	default:
-		o.stateAfterSleep = o.CheckForFs
+		o.stateAfterSleep = o.CheckFs
 		o.nextState = o.Sleep
 		return
 	}
@@ -196,8 +191,9 @@ func (o *ProvisionOperationStateMachine) CheckMountTarget() {
 		return
 	}
 
-	logger.Info("getMountsStatus-returning: " + *mtOutput.MountTargets[0].LifeCycleState)
-	switch *mtOutput.MountTargets[0].LifeCycleState {
+	o.state.MountTargetState = *mtOutput.MountTargets[0].LifeCycleState
+
+	switch o.state.MountTargetState {
 	case efs.LifeCycleStateAvailable:
 		o.state.MountTargetID = *mtOutput.MountTargets[0].MountTargetId
 		o.state.MountTargetIp = *mtOutput.MountTargets[0].IpAddress
@@ -210,7 +206,7 @@ func (o *ProvisionOperationStateMachine) CheckMountTarget() {
 }
 
 func (o *ProvisionOperationStateMachine) OpenPerms() {
-	logger := o.logger.Session("provision-state-get-mount-ip")
+	logger := o.logger.Session("provision-state-open-perms")
 	logger.Info("start")
 	defer logger.Info("end")
 	defer o.updateCb(o.state)

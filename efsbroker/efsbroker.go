@@ -385,7 +385,7 @@ func (b *Broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 	if err != nil {
 		return brokerapi.Binding{}, err
 	}
-	mountConfig := "{\"ip\": \"" + ip + "\"}"
+	mountConfig := map[string]interface{}{"ip":  ip }
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response

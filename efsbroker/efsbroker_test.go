@@ -8,8 +8,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
 
-	"os"
-
 	"time"
 
 	"code.cloudfoundry.org/clock/fakeclock"
@@ -32,15 +30,13 @@ var AnErr = errors.New("bad create fs")
 
 var _ = Describe("Broker", func() {
 	var (
-		broker             *efsbroker.Broker
-		fakeOs             *os_fake.FakeOs
-		fakeIoutil         *ioutil_fake.FakeIoutil
-		fakeEFSService     *efsfakes.FakeEFSService
-		fakeVolTools       *efsdriverfakes.FakeVolTools
-		fakeClock          *fakeclock.FakeClock
-		logger             lager.Logger
-		WriteFileCallCount int
-		WriteFileWrote     string
+		broker         *efsbroker.Broker
+		fakeOs         *os_fake.FakeOs
+		fakeIoutil     *ioutil_fake.FakeIoutil
+		fakeEFSService *efsfakes.FakeEFSService
+		fakeClock      *fakeclock.FakeClock
+		fakeVolTools   *efsdriverfakes.FakeVolTools
+		logger         lager.Logger
 	)
 
 	BeforeEach(func() {
@@ -50,11 +46,6 @@ var _ = Describe("Broker", func() {
 		fakeClock = fakeclock.NewFakeClock(time.Unix(123, 456))
 		fakeEFSService = &efsfakes.FakeEFSService{}
 		fakeVolTools = &efsdriverfakes.FakeVolTools{}
-		fakeIoutil.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
-			WriteFileCallCount++
-			WriteFileWrote = string(data)
-			return nil
-		}
 	})
 
 	//Context("when recreating", func() {
@@ -114,6 +105,7 @@ var _ = Describe("Broker", func() {
 				"fake-security-group",
 				fakeVolTools,
 				efsbroker.NewProvisionOperation,
+				efsbroker.NewDeprovisionOperation,
 			)
 
 			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
@@ -168,9 +160,6 @@ var _ = Describe("Broker", func() {
 			)
 
 			BeforeEach(func() {
-				WriteFileCallCount = 0
-				WriteFileWrote = ""
-
 				instanceID = "some-instance-id"
 				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
@@ -210,7 +199,11 @@ var _ = Describe("Broker", func() {
 
 			It("should write state", func() {
 				Eventually(func() string {
-					return WriteFileWrote
+					if fakeIoutil.WriteFileCallCount() == 0 {
+						return ""
+					}
+					_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
+					return string(data)
 				}, time.Second*1, time.Millisecond*100).Should(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"generalPurpose","organization_guid":"","space_guid":"","EfsId":"fake-fs-id","FsState":"available","MountId":"fake-mt-id","MountState":"available","MountIp":"1.1.1.1","Err":null}},"BindingMap":{}}`))
 			})
 
@@ -290,8 +283,6 @@ var _ = Describe("Broker", func() {
 			)
 
 			BeforeEach(func() {
-				WriteFileCallCount = 0
-				WriteFileWrote = ""
 				instanceID = "some-instance-id"
 				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
@@ -313,9 +304,6 @@ var _ = Describe("Broker", func() {
 
 			Context("when deprovision is working", func() {
 				JustBeforeEach(func() {
-					WriteFileCallCount = 0
-					WriteFileWrote = ""
-
 					count := 0
 					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
 						logger.Info("fake-mount-target-info", lager.Data{"count": count})
@@ -374,8 +362,8 @@ var _ = Describe("Broker", func() {
 				})
 
 				It("should write state", func() {
-					Expect(WriteFileCallCount).To(Equal(1))
-					Expect(WriteFileWrote).To(Equal("{\"InstanceMap\":{},\"BindingMap\":{}}"))
+					_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
+					Expect(string(data)).To(Equal("{\"InstanceMap\":{},\"BindingMap\":{}}"))
 				})
 
 				It("should delete the mount targets", func() {
@@ -663,12 +651,11 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("should write state", func() {
-				WriteFileCallCount = 0
-				WriteFileWrote = ""
 				_, err := broker.Bind("some-instance-id", "binding-id", bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(WriteFileWrote).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"fake-fs-id","FsState":"available","MountId":"fake-mt-id","MountState":"available","MountIp":"1.1.1.1","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
+				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"fake-fs-id","FsState":"available","MountId":"fake-mt-id","MountState":"available","MountIp":"1.1.1.1","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
 			})
 
 			It("errors if mode is not a boolean", func() {
@@ -747,13 +734,11 @@ var _ = Describe("Broker", func() {
 				Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
 			})
 			It("should write state", func() {
-				WriteFileCallCount = 0
-				WriteFileWrote = ""
 				err := broker.Unbind("some-instance-id", "binding-id", brokerapi.UnbindDetails{})
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(WriteFileCallCount).To(Equal(1))
-				Expect(WriteFileWrote).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"fake-fs-id","FsState":"available","MountId":"fake-mt-id","MountState":"available","MountIp":"1.1.1.1","Err":null}},"BindingMap":{}}`))
+				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"fake-fs-id","FsState":"available","MountId":"fake-mt-id","MountState":"available","MountIp":"1.1.1.1","Err":null}},"BindingMap":{}}`))
 			})
 
 		})

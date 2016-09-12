@@ -177,55 +177,40 @@ func (o *ProvisionOperationStateMachine) CheckMountTarget() {
 	defer logger.Info("end")
 	defer o.updateCb(o.state)
 
-	//var mtOutput *efs.DescribeMountTargetsOutput
-	//mtOutput, o.state.Err = o.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
-	//	FileSystemId: aws.String(o.state.FsID),
-	//})
-	//if o.state.Err != nil {
-	//	logger.Error("err-getting-mount-target-status", o.state.Err)
-	//	o.nextState = o.Finish
-	//	return
-	//}
-	//if len(mtOutput.MountTargets) != 1 {
-	//	o.state.Err = fmt.Errorf("AWS returned an unexpected number of mount targets: %d", len(mtOutput.MountTargets))
-	//	logger.Error("error-at-amazon", o.state.Err)
-	//	o.nextState = o.Finish
-	//	return
-	//}
-	//
-	//o.state.MountTargetState = *mtOutput.MountTargets[0].LifeCycleState
+	var mtOutput *efs.DescribeMountTargetsOutput
+	mtOutput, o.state.Err = o.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
+		FileSystemId: aws.String(o.state.FsID),
+	})
+	if o.state.Err != nil {
+		logger.Error("err-getting-mount-target-status", o.state.Err)
+		o.nextState = o.Finish
+		return
+	}
+	if len(mtOutput.MountTargets) != 1 {
+		o.state.Err = fmt.Errorf("AWS returned an unexpected number of mount targets: %d", len(mtOutput.MountTargets))
+		logger.Error("error-at-amazon", o.state.Err)
+		o.nextState = o.Finish
+		return
+	}
 
-	//switch o.state.MountTargetState {
-	//case efs.LifeCycleStateAvailable:
-	//	o.state.MountTargetID = *mtOutput.MountTargets[0].MountTargetId
-	//	o.state.MountTargetIp = *mtOutput.MountTargets[0].IpAddress
-	//	o.nextState = o.OpenPerms
-	//	return
-	//default:
-	//	o.StateAfterSleep(o.CheckMountTarget)
-	//	return
-	//}
+	o.state.MountTargetState = *mtOutput.MountTargets[0].LifeCycleState
 
-	//o.state.MountTargetID = *mtOutput.MountTargets[0].MountTargetId
-	//o.state.MountTargetIp = *mtOutput.MountTargets[0].IpAddress
-	//o.nextState = o.OpenPerms
-
-	//o.StateAfterSleep(o.CheckMountTarget)
-
-	err := checkMountTarget(o.logger, o.efsService, o.state.FsID, efs.LifeCycleStateAvailable, func(mount *efs.MountTargetDescription) {
-		o.state.MountTargetID = *mount.MountTargetId
-		o.state.MountTargetIp = *mount.IpAddress
-		o.state.MountTargetState = efs.LifeCycleStateAvailable
+	switch o.state.MountTargetState {
+	case efs.LifeCycleStateAvailable:
+		o.state.MountTargetID = *mtOutput.MountTargets[0].MountTargetId
+		o.state.MountTargetIp = *mtOutput.MountTargets[0].IpAddress
 		o.nextState = o.OpenPerms
 		return
-	}, func() {
+	default:
 		o.StateAfterSleep(o.CheckMountTarget)
 		return
-	})
-	if err != nil {
-		o.state.Err = err
-		o.nextState = o.Finish
 	}
+
+	o.state.MountTargetID = *mtOutput.MountTargets[0].MountTargetId
+	o.state.MountTargetIp = *mtOutput.MountTargets[0].IpAddress
+	o.nextState = o.OpenPerms
+
+	o.StateAfterSleep(o.CheckMountTarget)
 }
 
 func checkMountTarget(logger lager.Logger, efsService EFSService, fsID string, state string, success func(mount *efs.MountTargetDescription), failure func()) error {

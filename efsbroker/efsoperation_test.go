@@ -324,7 +324,7 @@ var _ = Describe("Operation", func() {
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
-			Context("when amazon's describe mount target returns an unexpected lifecycle state", func() {
+			Context("when amazon's describe mount target returns creating", func() {
 				BeforeEach(func() {
 					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 						MountTargets: []*efs.MountTargetDescription{{
@@ -335,6 +335,7 @@ var _ = Describe("Operation", func() {
 				})
 				It("should remain in the check mount target state", func() {
 					provisionOp.Sleep()
+					Expect(operationState.MountTargetState).To(Equal(efs.LifeCycleStateCreating))
 					Expect(provisionOp.State()).To(BeState(provisionOp.CheckMountTarget))
 				})
 			})

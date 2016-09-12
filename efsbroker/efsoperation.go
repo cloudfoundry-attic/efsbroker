@@ -412,7 +412,7 @@ func (o *DeprovisionOperation) CheckMountTarget(fsID string) error {
 			logger.Error("err-at-amazon", err)
 			return err
 		} else {
-			o.clock.Sleep(time.Millisecond * 100)
+			o.clock.Sleep(PollingInterval)
 		}
 	}
 	return nil

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"time"
 
 	"sync"
 
@@ -26,7 +25,6 @@ import (
 const (
 	PermissionVolumeMount = brokerapi.RequiredPermission("volume_mount")
 	DefaultContainerPath  = "/var/vcap/data"
-	PollingInterval       = 3 * time.Second
 )
 
 var (
@@ -241,7 +239,7 @@ func (b *Broker) Bind(instanceID string, bindingID string, details brokerapi.Bin
 	if err != nil {
 		return brokerapi.Binding{}, err
 	}
-	mountConfig := map[string]interface{}{"ip":  ip }
+	mountConfig := map[string]interface{}{"ip": ip}
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response

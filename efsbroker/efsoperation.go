@@ -16,6 +16,10 @@ import (
 
 //go:generate counterfeiter -o efsfakes/fake_operation.go . Operation
 
+const (
+	PollingInterval = 5 * time.Second
+)
+
 type Operation interface {
 	Execute()
 }

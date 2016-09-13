@@ -325,8 +325,8 @@ func (b *Broker) LastOperation(instanceID string, operationData string) (brokera
 		}
 
 		if instance.Err != nil {
-			logger.Info("last-operation-error")
-			return brokerapi.LastOperation{}, instance.Err
+			logger.Info(fmt.Sprintf("last-operation-error %#v", instance.Err))
+			return brokerapi.LastOperation{State: brokerapi.Failed, Description: instance.Err.Error()}, nil
 		}
 
 		logger.Debug(fmt.Sprintf("Instance data %#v", instance))
@@ -386,23 +386,36 @@ func (b *Broker) DeprovisionEvent(opState *OperationState) {
 }
 
 func stateToLastOperation(instance EFSInstance) brokerapi.LastOperation {
+	desc := stateToDescription(instance)
 	switch instance.FsState {
+	case "":
+		return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
 	case efs.LifeCycleStateCreating:
-		return brokerapi.LastOperation{State: brokerapi.InProgress}
+		return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
 	case efs.LifeCycleStateAvailable:
 
 		switch instance.MountState {
+		case "":
+			return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
 		case efs.LifeCycleStateCreating:
-			return brokerapi.LastOperation{State: brokerapi.InProgress}
+			return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
 		case efs.LifeCycleStateAvailable:
-			return brokerapi.LastOperation{State: brokerapi.Succeeded}
+			return brokerapi.LastOperation{State: brokerapi.Succeeded, Description: desc}
 		default:
-			return brokerapi.LastOperation{State: brokerapi.Failed}
+			return brokerapi.LastOperation{State: brokerapi.Failed, Description: desc}
 		}
 
 	default:
-		return brokerapi.LastOperation{State: brokerapi.Failed}
+		return brokerapi.LastOperation{State: brokerapi.Failed, Description: desc}
 	}
+}
+
+func stateToDescription(instance EFSInstance) string {
+	desc := fmt.Sprintf("FsID: %s, FsState: %s, MountID: %s, MountState: %s, MountAddress: %s", instance.EfsId, instance.FsState, instance.MountId, instance.MountState, instance.MountIp)
+	if instance.Err != nil {
+		desc = fmt.Sprintf("%s, Error: %s", desc, instance.Err.Error())
+	}
+	return desc
 }
 
 func (b *Broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceID string) bool {

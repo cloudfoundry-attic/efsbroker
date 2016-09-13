@@ -566,7 +566,7 @@ var _ = Describe("Broker", func() {
 
 					It("returns in progress", func() {
 						Expect(err).NotTo(HaveOccurred())
-						Expect(op.State).To(Equal(brokerapi.Failed))
+						Expect(op.State).To(Equal(brokerapi.InProgress))
 					})
 
 				})

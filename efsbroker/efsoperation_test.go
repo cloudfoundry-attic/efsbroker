@@ -70,12 +70,13 @@ var _ = Describe("Operation", func() {
 	Context("ProvisionOperation", func() {
 
 		var (
+			err                error
+			filesystemID       *string
 			provisionOp        *efsbroker.ProvisionOperationStateMachine
 			fakeOs             *os_fake.FakeOs
 			fakeIoutil         *ioutil_fake.FakeIoutil
 			WriteFileCallCount int
 			WriteFileWrote     string
-			filesystemID       *string
 			operationState     *efsbroker.OperationState
 		)
 
@@ -96,9 +97,9 @@ var _ = Describe("Operation", func() {
 			filesystemID = aws.String("fake-fs-id")
 		})
 
-		Context(".Start", func() {
+		Context(".CreateFs", func() {
 			JustBeforeEach(func() {
-				provisionOp.CreateFs()
+				err = provisionOp.CreateFs()
 			})
 			Context("when amazon's create file system returns ok", func() {
 				BeforeEach(func() {
@@ -106,8 +107,8 @@ var _ = Describe("Operation", func() {
 						FileSystemId: filesystemID,
 					}, nil)
 				})
-				It("should move to check-for-fs state when amazon fails to acknowledge", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.CheckFs))
+				It("should succeed and update fsid state", func() {
+					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.FsID).To(ContainSubstring(*filesystemID))
 				})
 			})
@@ -116,61 +117,43 @@ var _ = Describe("Operation", func() {
 				BeforeEach(func() {
 					fakeEFSService.CreateFileSystemReturns(nil, SomeErr)
 				})
-				It("should error when amazon fails to acknowledge", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).To(Equal(SomeErr))
-				})
-			})
-		})
-
-		Context(".Sleep", func() {
-			JustBeforeEach(func() {
-				provisionOp.Sleep()
-			})
-			Context("when sleep is called and next state is Finish", func() {
-				BeforeEach(func() {
-					provisionOp.StateAfterSleep(provisionOp.Finish)
-				})
-				It("should sleep and then move to the finish state", func() {
-					Expect(fakeClock.SleepCallCount()).To(Equal(1))
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
 				})
 			})
 		})
 
 		Context(".CheckFS", func() {
 			JustBeforeEach(func() {
-				provisionOp.CheckFs()
+				err = provisionOp.CheckFs()
 			})
 			Context("when amazon's describe file system returns creating", func() {
 				BeforeEach(func() {
-					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
-						FileSystems: []*efs.FileSystemDescription{{
-							FileSystemId:   filesystemID,
-							LifeCycleState: aws.String(efs.LifeCycleStateCreating),
-						}},
-					}, nil)
+					count := 0
+					fakeEFSService.DescribeFileSystemsStub = func(*efs.DescribeFileSystemsInput) (*efs.DescribeFileSystemsOutput, error) {
+						if count == 0 {
+							count++
+							return &efs.DescribeFileSystemsOutput{
+								FileSystems: []*efs.FileSystemDescription{{
+									FileSystemId:   filesystemID,
+									LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+								}},
+							}, nil
+						}
+						return &efs.DescribeFileSystemsOutput{
+							FileSystems: []*efs.FileSystemDescription{{
+								FileSystemId:   filesystemID,
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}},
+						}, nil
+					}
 				})
-				It("should sleep and remain in check-for-fs state", func() {
-					provisionOp.Sleep()
-					Expect(provisionOp.State()).To(BeState(provisionOp.CheckFs))
-					Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateCreating))
-					Expect(operationState.Err).To(BeNil())
-				})
-			})
-			Context("when amazon's describe file system returns available", func() {
-				BeforeEach(func() {
-					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
-						FileSystems: []*efs.FileSystemDescription{{
-							FileSystemId:   filesystemID,
-							LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-						}},
-					}, nil)
-				})
-				It("should move to create-mount-target state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.CreateMountTarget))
+				It("should sleep and try again", func() {
+					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateAvailable))
 					Expect(operationState.Err).To(BeNil())
+					Expect(fakeEFSService.DescribeFileSystemsCallCount()).To(Equal(2))
 				})
 			})
 			Context("when amazon's describe file system returns an unexpected state", func() {
@@ -182,11 +165,10 @@ var _ = Describe("Operation", func() {
 						}},
 					}, nil)
 				})
-				It("should sleep and remain in check fs state", func() {
-					provisionOp.Sleep()
-					Expect(provisionOp.State()).To(BeState(provisionOp.CheckFs))
+				It("should error and set Err state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateDeleted))
-					Expect(operationState.Err).To(BeNil())
+					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
 			Context("when amazon's describe file system returns no file system lifecycle state at all", func() {
@@ -198,8 +180,8 @@ var _ = Describe("Operation", func() {
 						}},
 					}, nil)
 				})
-				It("should move to finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should err and set Err state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -207,8 +189,8 @@ var _ = Describe("Operation", func() {
 				BeforeEach(func() {
 					fakeEFSService.DescribeFileSystemsReturns(nil, errors.New("badness"))
 				})
-				It("should move to finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error and set Err state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -218,8 +200,8 @@ var _ = Describe("Operation", func() {
 						FileSystems: []*efs.FileSystemDescription{{}},
 					}, nil)
 				})
-				It("should move to finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error and set Err state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -235,8 +217,8 @@ var _ = Describe("Operation", func() {
 						}},
 					}, nil)
 				})
-				It("should move to finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error and set Err state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -244,14 +226,17 @@ var _ = Describe("Operation", func() {
 
 		Context(".CreateMountTarget", func() {
 			JustBeforeEach(func() {
-				provisionOp.CreateMountTarget()
+				err = provisionOp.CreateMountTarget()
 			})
 			Context("when amazon's create mount target return successfully", func() {
 				BeforeEach(func() {
-					fakeEFSService.CreateMountTargetReturns(nil, nil)
+					fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
+						MountTargetId:  aws.String("fake-mt-id"),
+						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+					}, nil)
 				})
-				It("should move to the finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.CheckMountTarget))
+				It("should succeed and set ststae", func() {
+					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.Err).To(BeNil())
 				})
 			})
@@ -260,7 +245,7 @@ var _ = Describe("Operation", func() {
 					fakeEFSService.CreateMountTargetReturns(nil, errors.New("badness"))
 				})
 				It("should move to the finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -268,7 +253,7 @@ var _ = Describe("Operation", func() {
 
 		Context(".CheckMountTarget", func() {
 			JustBeforeEach(func() {
-				provisionOp.CheckMountTarget()
+				err = provisionOp.CheckMountTarget()
 			})
 			Context("when amazon's describe mount target return successfully", func() {
 				BeforeEach(func() {
@@ -280,10 +265,11 @@ var _ = Describe("Operation", func() {
 						}},
 					}, nil)
 				})
-				It("should move to the open perms state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.OpenPerms))
+				It("should succeed and set op state", func() {
+					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.Err).To(BeNil())
 					Expect(operationState.MountTargetID).To(Equal("fake-mt-id"))
+					Expect(operationState.MountTargetState).To(Equal("available"))
 					Expect(operationState.MountTargetIp).To(Equal("1.2.3.4"))
 				})
 			})
@@ -291,8 +277,8 @@ var _ = Describe("Operation", func() {
 				BeforeEach(func() {
 					fakeEFSService.DescribeMountTargetsReturns(nil, errors.New("badness"))
 				})
-				It("should move to the finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error and set err on op state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -302,8 +288,8 @@ var _ = Describe("Operation", func() {
 						MountTargets: []*efs.MountTargetDescription{},
 					}, nil)
 				})
-				It("should move to the finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error and set err on op state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
@@ -319,54 +305,77 @@ var _ = Describe("Operation", func() {
 						}},
 					}, nil)
 				})
-				It("should move to the finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should error and set err on op state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
-			Context("when amazon's describe mount target returns creating", func() {
+			Context("when amazon's describe mount target returns creating then available", func() {
+				BeforeEach(func() {
+					count := 0
+					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
+						if count == 0 {
+							count++
+							return &efs.DescribeMountTargetsOutput{
+								MountTargets: []*efs.MountTargetDescription{{
+									MountTargetId:  aws.String("fake-mt-id"),
+									LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+								}},
+							}, nil
+						}
+						return &efs.DescribeMountTargetsOutput{
+							MountTargets: []*efs.MountTargetDescription{{
+								MountTargetId:  aws.String("fake-mt-id"),
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}},
+						}, nil
+					}
+				})
+				It("should succeed", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(operationState.MountTargetState).To(Equal(efs.LifeCycleStateAvailable))
+					Expect(fakeEFSService.DescribeMountTargetsCallCount()).To(Equal(2))
+				})
+			})
+			Context("when amazon's describe mount target returns an unexpected state", func() {
 				BeforeEach(func() {
 					fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 						MountTargets: []*efs.MountTargetDescription{{
 							MountTargetId:  aws.String("fake-mt-id"),
-							LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+							LifeCycleState: aws.String(efs.LifeCycleStateDeleting),
 						}},
 					}, nil)
 				})
-				It("should remain in the check mount target state", func() {
-					provisionOp.Sleep()
-					Expect(operationState.MountTargetState).To(Equal(efs.LifeCycleStateCreating))
-					Expect(provisionOp.State()).To(BeState(provisionOp.CheckMountTarget))
+				It("should error and set err on op state", func() {
+					Expect(err).To(HaveOccurred())
+					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
 		})
 
 		Context(".OpenPerms", func() {
-			//Expect(operationState.Err).NotTo(BeNil())
-
 			JustBeforeEach(func() {
-				provisionOp.OpenPerms()
+				err = provisionOp.OpenPerms()
 			})
-			Context("when can open permissions", func() {
+			Context("when open permissions succeeds", func() {
 				BeforeEach(func() {
 					fakeVolTools.OpenPermsReturns(efsvoltools.ErrorResponse{Err: ""})
 				})
-				It("moves to finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("should succeed", func() {
+					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.Err).To(BeNil())
 				})
 			})
-			Context("when can not open permissions", func() {
+			Context("when open permissions fails", func() {
 				BeforeEach(func() {
 					fakeVolTools.OpenPermsReturns(efsvoltools.ErrorResponse{Err: "An error occured"})
 				})
-				It("moves to finish state", func() {
-					Expect(provisionOp.State()).To(BeState(provisionOp.Finish))
+				It("fails and sets err on op state", func() {
+					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
 			})
 		})
-
 	})
 
 	Context("DeprovisionOperation", func() {

@@ -357,7 +357,7 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 
 	defer b.persist(b.dynamic)
 
-	efsInstance := b.dynamic.InstanceMap[opState.InstanceID]
+	efsInstance, _ := b.dynamic.InstanceMap[opState.InstanceID]
 	efsInstance.EfsId = opState.FsID
 	efsInstance.FsState = opState.FsState
 	efsInstance.MountId = opState.MountTargetID

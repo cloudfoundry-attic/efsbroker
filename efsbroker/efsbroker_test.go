@@ -8,6 +8,8 @@ import (
 
 	"time"
 
+	"sync"
+
 	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
@@ -525,37 +527,47 @@ var _ = Describe("Broker", func() {
 
 		})
 
-		//Context("when multiple operations happen in parallel", func() {
-		//	It("maintains consistency", func() {
-		//		var wg sync.WaitGroup
-		//
-		//		wg.Add(2)
-		//
-		//		smash := func(uniqueName string) {
-		//			defer GinkgoRecover()
-		//			defer wg.Done()
-		//
-		//			broker.Services()
-		//
-		//			_, err := broker.Provision(uniqueName, brokerapi.ProvisionDetails{}, true)
-		//			Expect(err).NotTo(HaveOccurred())
-		//
-		//			_, err = broker.Bind(uniqueName, "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
-		//			Expect(err).NotTo(HaveOccurred())
-		//
-		//			err = broker.Unbind(uniqueName, "some-other-binding-id", brokerapi.UnbindDetails{})
-		//			Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
-		//
-		//			_, err = broker.Deprovision(uniqueName, brokerapi.DeprovisionDetails{}, true)
-		//			Expect(err).NotTo(HaveOccurred())
-		//		}
-		//
-		//		// Note go race detection should kick in if access is unsynchronized
-		//		go smash("some-instance-1")
-		//		go smash("some-instance-2")
-		//
-		//		wg.Wait()
-		//	})
-		//})
+		Context("when multiple operations happen in parallel", func() {
+			It("maintains consistency", func() {
+				var wg sync.WaitGroup
+
+				wg.Add(5)
+
+				smash := func(uniqueName string) {
+					defer GinkgoRecover()
+					defer wg.Done()
+
+					broker.Services()
+
+					opState := efsbroker.OperationState{
+						InstanceID:       uniqueName,
+						FsID:             "foo",
+						FsState:          efs.LifeCycleStateAvailable,
+						MountTargetID:    "bar",
+						MountTargetState: efs.LifeCycleStateAvailable,
+						MountTargetIp:    "1.2.3.4",
+					}
+
+					broker.ProvisionEvent(&opState)
+
+					_, err := broker.Bind(uniqueName, "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+					Expect(err).NotTo(HaveOccurred())
+
+					err = broker.Unbind(uniqueName, "some-other-binding-id", brokerapi.UnbindDetails{})
+					Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
+
+					broker.DeprovisionEvent(&opState)
+				}
+
+				// Note go race detection should kick in if access is unsynchronized
+				go smash("some-instance-1")
+				go smash("some-instance-2")
+				go smash("some-instance-3")
+				go smash("some-instance-4")
+				go smash("some-instance-5")
+
+				wg.Wait()
+			})
+		})
 	})
 })

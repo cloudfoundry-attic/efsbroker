@@ -1,18 +1,16 @@
 package efsbroker_test
 
 import (
-	"os"
-
-	"fmt"
-
 	"errors"
+	"fmt"
+	"os"
 
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
 	"code.cloudfoundry.org/efsdriver/efsdriverfakes"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
-	"code.cloudfoundry.org/goshims/ioutil/ioutil_fake"
-	"code.cloudfoundry.org/goshims/os/os_fake"
+	"code.cloudfoundry.org/goshims/ioutilshim/ioutil_fake"
+	"code.cloudfoundry.org/goshims/osshim/os_fake"
 	"code.cloudfoundry.org/lager"
 	"code.cloudfoundry.org/lager/lagertest"
 	"github.com/aws/aws-sdk-go/aws"

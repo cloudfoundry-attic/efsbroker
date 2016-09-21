@@ -2,22 +2,20 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
 	"strings"
 
 	"code.cloudfoundry.org/cflager"
-	"code.cloudfoundry.org/debugserver"
-
-	"fmt"
-
-	"os"
-
 	"code.cloudfoundry.org/clock"
+	"code.cloudfoundry.org/debugserver"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/utils"
 	"code.cloudfoundry.org/efsdriver/efsvoltools/voltoolshttp"
-	ioutilshim "code.cloudfoundry.org/goshims/ioutil"
-	"code.cloudfoundry.org/goshims/os"
+	"code.cloudfoundry.org/goshims/ioutilshim"
+	"code.cloudfoundry.org/goshims/osshim"
 	"code.cloudfoundry.org/lager"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/efs"

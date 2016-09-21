@@ -14,8 +14,8 @@ import (
 
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
-	ioutilshim "code.cloudfoundry.org/goshims/ioutil"
-	osshim "code.cloudfoundry.org/goshims/os"
+	"code.cloudfoundry.org/goshims/ioutilshim"
+	"code.cloudfoundry.org/goshims/osshim"
 	"code.cloudfoundry.org/lager"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"

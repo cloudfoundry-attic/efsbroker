@@ -357,6 +357,10 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 
 	defer b.persist(b.dynamic)
 
+	if opState.Err != nil {
+		logger.Error("Last provision failed", opState.Err)
+	}
+
 	efsInstance, _ := b.dynamic.InstanceMap[opState.InstanceID]
 	efsInstance.EfsId = opState.FsID
 	efsInstance.FsState = opState.FsState

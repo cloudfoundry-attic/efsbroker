@@ -8,8 +8,11 @@ import (
 
 	"strings"
 
+	"context"
+
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
 	"code.cloudfoundry.org/lager"
+	"code.cloudfoundry.org/voldriver/driverhttp"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 )
@@ -238,7 +241,10 @@ func (o *ProvisionOperationStateMachine) OpenPerms() error {
 
 	opts := map[string]interface{}{"ip": o.state.MountTargetIp}
 
-	resp := o.efsTools.OpenPerms(logger, efsvoltools.OpenPermsRequest{Name: o.state.FsID, Opts: opts})
+	ctx := context.TODO()
+	env := driverhttp.NewHttpDriverEnv(&logger, &ctx)
+
+	resp := o.efsTools.OpenPerms(env, efsvoltools.OpenPermsRequest{Name: o.state.FsID, Opts: opts})
 	if resp.Err != "" {
 		o.state.Err = errors.New(resp.Err)
 		logger.Error("failed-to-open-mount-permissions", o.state.Err)

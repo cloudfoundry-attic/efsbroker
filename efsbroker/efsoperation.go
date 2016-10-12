@@ -242,7 +242,7 @@ func (o *ProvisionOperationStateMachine) OpenPerms() error {
 	opts := map[string]interface{}{"ip": o.state.MountTargetIp}
 
 	ctx := context.TODO()
-	env := driverhttp.NewHttpDriverEnv(&logger, &ctx)
+	env := driverhttp.NewHttpDriverEnv(logger, ctx)
 
 	resp := o.efsTools.OpenPerms(env, efsvoltools.OpenPermsRequest{Name: o.state.FsID, Opts: opts})
 	if resp.Err != "" {

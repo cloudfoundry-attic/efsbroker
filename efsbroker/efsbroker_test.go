@@ -371,7 +371,7 @@ var _ = Describe("Broker", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","Context":null,"EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":"","Context":null}}}`))
 			})
 
 			It("errors if mode is not a boolean", func() {
@@ -465,7 +465,7 @@ var _ = Describe("Broker", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","Context":null,"EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
 			})
 		})
 
@@ -491,7 +491,7 @@ var _ = Describe("Broker", func() {
 			It("should write state to disk", func() {
 				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(1))
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(0)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","Context":null,"EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
 			})
 		})
 
@@ -522,7 +522,7 @@ var _ = Describe("Broker", func() {
 			It("should write state to disk", func() {
 				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(3))
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(0)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"instance1":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"instance1":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","Context":null,"EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
 			})
 
 		})

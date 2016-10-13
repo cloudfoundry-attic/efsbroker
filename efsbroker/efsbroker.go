@@ -12,6 +12,8 @@ import (
 
 	"path"
 
+	"context"
+
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
 	"code.cloudfoundry.org/goshims/ioutilshim"
@@ -143,7 +145,7 @@ func (b *Broker) Services() []brokerapi.Service {
 	}}
 }
 
-func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
+func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool, context context.Context) (brokerapi.ProvisionedServiceSpec, error) {
 	logger := b.logger.Session("provision").WithData(lager.Data{"instanceID": instanceID})
 	logger.Info("start")
 	defer logger.Info("end")
@@ -168,7 +170,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true, OperationData: "provision"}, nil
 }
 
-func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
+func (b *Broker) Deprovision(instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool, context context.Context) (brokerapi.DeprovisionServiceSpec, error) {
 	logger := b.logger.Session("deprovision")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -205,7 +207,7 @@ func (b *Broker) setErrorOnInstance(instanceId string, err error) {
 	return
 }
 
-func (b *Broker) Bind(instanceID string, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
+func (b *Broker) Bind(instanceID string, bindingID string, details brokerapi.BindDetails, context context.Context) (brokerapi.Binding, error) {
 	logger := b.logger.Session("bind")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -281,7 +283,7 @@ func (b *Broker) getMountIp(fsId string) (string, error) {
 	return mountConfig, nil
 }
 
-func (b *Broker) Unbind(instanceID string, bindingID string, details brokerapi.UnbindDetails) error {
+func (b *Broker) Unbind(instanceID string, bindingID string, details brokerapi.UnbindDetails, context context.Context) error {
 	logger := b.logger.Session("unbind")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -304,7 +306,7 @@ func (b *Broker) Unbind(instanceID string, bindingID string, details brokerapi.U
 	return nil
 }
 
-func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool) (brokerapi.UpdateServiceSpec, error) {
+func (b *Broker) Update(instanceID string, details brokerapi.UpdateDetails, asyncAllowed bool, context context.Context) (brokerapi.UpdateServiceSpec, error) {
 	panic("not implemented")
 }
 

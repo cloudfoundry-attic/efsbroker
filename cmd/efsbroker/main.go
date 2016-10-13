@@ -134,13 +134,13 @@ func createServer(logger lager.Logger) ifrit.Runner {
 		panic(err)
 	}
 
-	serviceBroker := efsbroker.New(logger,
+	serviceBrokerWithContext := efsbroker.New(logger,
 		*serviceName, *serviceId,
 		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, clock.NewClock(),
 		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup, efsTools, efsbroker.NewProvisionOperation, efsbroker.NewDeprovisionOperation)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
-	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)
+	handler := brokerapi.NewWithContext(serviceBrokerWithContext, logger.Session("broker-api"), credentials)
 
 	return http_server.New(*atAddress, handler)
 }

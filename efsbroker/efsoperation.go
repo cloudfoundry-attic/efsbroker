@@ -39,6 +39,7 @@ type OperationState struct {
 	FsState          string
 	MountTargetID    string
 	MountTargetState string
+	MountPermsSet    bool
 	MountTargetIp    string
 	Err              error
 }
@@ -250,6 +251,8 @@ func (o *ProvisionOperationStateMachine) OpenPerms() error {
 		logger.Error("failed-to-open-mount-permissions", o.state.Err)
 		return o.state.Err
 	}
+
+	o.state.MountPermsSet = true
 
 	return nil
 }

@@ -298,10 +298,22 @@ var _ = Describe("Broker", func() {
 						broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "available", MountTargetID: mountID, MountTargetState: "available", MountTargetIp: "1.2.3.4"})
 					})
 
-					It("returns successful", func() {
+					It("returns in progress", func() {
 						Expect(err).NotTo(HaveOccurred())
-						Expect(op.State).To(Equal(brokerapi.Succeeded))
+						Expect(op.State).To(Equal(brokerapi.InProgress))
 					})
+
+					Context("and permissions were set on the mount", func() {
+						BeforeEach(func() {
+							broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "available", MountTargetID: mountID, MountTargetState: "available", MountPermsSet: true, MountTargetIp: "1.2.3.4"})
+						})
+
+						It("returns success", func() {
+							Expect(err).NotTo(HaveOccurred())
+							Expect(op.State).To(Equal(brokerapi.Succeeded))
+						})
+					})
+
 				})
 			})
 
@@ -328,6 +340,7 @@ var _ = Describe("Broker", func() {
 					FsState:          efs.LifeCycleStateAvailable,
 					MountTargetID:    "bar",
 					MountTargetState: efs.LifeCycleStateAvailable,
+					MountPermsSet:    true,
 					MountTargetIp:    "1.2.3.4",
 				}
 
@@ -375,7 +388,7 @@ var _ = Describe("Broker", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
 			})
 
 			It("errors if mode is not a boolean", func() {
@@ -441,6 +454,7 @@ var _ = Describe("Broker", func() {
 					FsState:          efs.LifeCycleStateAvailable,
 					MountTargetID:    "bar",
 					MountTargetState: efs.LifeCycleStateAvailable,
+					MountPermsSet:    true,
 					MountTargetIp:    "1.2.3.4",
 				}
 
@@ -469,7 +483,7 @@ var _ = Describe("Broker", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
 			})
 		})
 
@@ -484,6 +498,7 @@ var _ = Describe("Broker", func() {
 					FsState:          efs.LifeCycleStateAvailable,
 					MountTargetID:    "bar",
 					MountTargetState: efs.LifeCycleStateAvailable,
+					MountPermsSet:    true,
 					MountTargetIp:    "1.2.3.4",
 				}
 			})
@@ -495,7 +510,7 @@ var _ = Describe("Broker", func() {
 			It("should write state to disk", func() {
 				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(1))
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(0)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
 			})
 		})
 
@@ -511,6 +526,7 @@ var _ = Describe("Broker", func() {
 					FsState:          efs.LifeCycleStateAvailable,
 					MountTargetID:    "bar",
 					MountTargetState: efs.LifeCycleStateAvailable,
+					MountPermsSet:    true,
 					MountTargetIp:    "1.2.3.4",
 				}
 				broker.ProvisionEvent(&opState)
@@ -526,7 +542,7 @@ var _ = Describe("Broker", func() {
 			It("should write state to disk", func() {
 				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(3))
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(0)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"instance1":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"instance1":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
 			})
 
 		})

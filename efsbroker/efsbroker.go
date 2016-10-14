@@ -41,12 +41,13 @@ type staticState struct {
 
 type EFSInstance struct {
 	brokerapi.ProvisionDetails
-	EfsId      string `json:"EfsId"`
-	FsState    string `json:"FsState"`
-	MountId    string `json:"MountId"`
-	MountState string `json:"MountState"`
-	MountIp    string `json:"MountIp"`
-	Err        error  `json:"Err"`
+	EfsId         string `json:"EfsId"`
+	FsState       string `json:"FsState"`
+	MountId       string `json:"MountId"`
+	MountState    string `json:"MountState"`
+	MountPermsSet bool   `json:"MountPermsSet"`
+	MountIp       string `json:"MountIp"`
+	Err           error  `json:"Err"`
 }
 
 type dynamicState struct {
@@ -161,7 +162,7 @@ func (b *Broker) Provision(instanceID string, details brokerapi.ProvisionDetails
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
 	}
 
-	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, "", "", "", "", "", nil}
+	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, "", "", "", "", false, "", nil}
 
 	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnetIds, b.securityGroup, b.clock, b.ProvisionEvent)
 
@@ -369,6 +370,7 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 	efsInstance.MountId = opState.MountTargetID
 	efsInstance.MountIp = opState.MountTargetIp
 	efsInstance.MountState = opState.MountTargetState
+	efsInstance.MountPermsSet = opState.MountPermsSet
 	efsInstance.Err = opState.Err
 	b.dynamic.InstanceMap[opState.InstanceID] = efsInstance
 }
@@ -393,6 +395,11 @@ func (b *Broker) DeprovisionEvent(opState *OperationState) {
 
 func stateToLastOperation(instance EFSInstance) brokerapi.LastOperation {
 	desc := stateToDescription(instance)
+
+	if instance.Err != nil {
+		return brokerapi.LastOperation{State: brokerapi.Failed, Description: desc}
+	}
+
 	switch instance.FsState {
 	case "":
 		return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
@@ -406,7 +413,12 @@ func stateToLastOperation(instance EFSInstance) brokerapi.LastOperation {
 		case efs.LifeCycleStateCreating:
 			return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
 		case efs.LifeCycleStateAvailable:
-			return brokerapi.LastOperation{State: brokerapi.Succeeded, Description: desc}
+			// TODO check if the permissions have been opened up.
+			if instance.MountPermsSet {
+				return brokerapi.LastOperation{State: brokerapi.Succeeded, Description: desc}
+			} else {
+				return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
+			}
 		default:
 			return brokerapi.LastOperation{State: brokerapi.Failed, Description: desc}
 		}

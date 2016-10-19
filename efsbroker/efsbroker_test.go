@@ -12,6 +12,8 @@ import (
 
 	"context"
 
+	"encoding/json"
+
 	"code.cloudfoundry.org/clock/fakeclock"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
@@ -25,7 +27,7 @@ import (
 )
 
 type dynamicState struct {
-	InstanceMap map[string]brokerapi.ProvisionDetails
+	InstanceMap map[string]efsbroker.EFSInstance
 	BindingMap  map[string]brokerapi.BindDetails
 }
 
@@ -53,6 +55,26 @@ var _ = Describe("Broker", func() {
 		fakeVolTools = &efsdriverfakes.FakeVolTools{}
 		fakeProvisionOperation = &efsfakes.FakeOperation{}
 		fakeDeprovisionOperation = &efsfakes.FakeOperation{}
+
+		fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
+			FileSystemId: aws.String("fake-fs-id"),
+		}, nil)
+		fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
+			FileSystems: []*efs.FileSystemDescription{{
+				FileSystemId:   aws.String("fake-fs-id"),
+				LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+			}},
+		}, nil)
+		fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+			MountTargets: []*efs.MountTargetDescription{{
+				MountTargetId:  aws.String("fake-mt-id"),
+				LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+				IpAddress:      aws.String("1.1.1.1"),
+			}},
+		}, nil)
+		fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
+			MountTargetId: aws.String("fake-mt-id"),
+		}, nil)
 	})
 
 	Context("when creating first time", func() {
@@ -74,26 +96,6 @@ var _ = Describe("Broker", func() {
 					return fakeDeprovisionOperation
 				},
 			)
-
-			fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
-				FileSystemId: aws.String("fake-fs-id"),
-			}, nil)
-			fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
-				FileSystems: []*efs.FileSystemDescription{{
-					FileSystemId:   aws.String("fake-fs-id"),
-					LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-				}},
-			}, nil)
-			fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
-				MountTargetId: aws.String("fake-mt-id"),
-			}, nil)
-			fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
-				MountTargets: []*efs.MountTargetDescription{{
-					MountTargetId:  aws.String("fake-mt-id"),
-					LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-					IpAddress:      aws.String("1.1.1.1"),
-				}},
-			}, nil)
 		})
 
 		Context(".Services", func() {
@@ -590,4 +592,73 @@ var _ = Describe("Broker", func() {
 			})
 		})
 	})
+
+	Context("when recreating", func() {
+		It("should be able to bind to previously created service", func() {
+			fileContents, err := json.Marshal(dynamicState{
+				InstanceMap: map[string]efsbroker.EFSInstance{
+					"service-name": {
+						EfsId:         "service-id",
+						FsState:       efs.LifeCycleStateAvailable,
+						MountId:       "foo",
+						MountState:    efs.LifeCycleStateAvailable,
+						MountPermsSet: true,
+						MountIp:       "0.0.0.0",
+						Err:           nil,
+					},
+				},
+				BindingMap: map[string]brokerapi.BindDetails{},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			fakeIoutil.ReadFileReturns(fileContents, nil)
+
+			broker = efsbroker.New(
+				logger,
+				"service-name", "service-id", "/fake-dir",
+				fakeOs,
+				fakeIoutil,
+				fakeClock,
+				fakeEFSService,
+				[]string{"fake-subnet-id"},
+				"fake-security-group",
+				fakeVolTools,
+				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []string, string, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
+					return fakeProvisionOperation
+				},
+				func(lager.Logger, efsbroker.EFSService, efsbroker.Clock, efsbroker.DeprovisionOperationSpec, func(*efsbroker.OperationState)) efsbroker.Operation {
+					return fakeDeprovisionOperation
+				},
+			)
+
+			_, err = broker.Bind(ctx, "service-name", "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("shouldn't be able to bind to service from invalid state file", func() {
+			filecontents := "{serviceName: [some invalid state]}"
+			fakeIoutil.ReadFileReturns([]byte(filecontents[:]), nil)
+
+			broker = efsbroker.New(
+				logger,
+				"service-name", "service-id", "/fake-dir",
+				fakeOs,
+				fakeIoutil,
+				fakeClock,
+				fakeEFSService,
+				[]string{"fake-subnet-id"},
+				"fake-security-group",
+				fakeVolTools,
+				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []string, string, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
+					return fakeProvisionOperation
+				},
+				func(lager.Logger, efsbroker.EFSService, efsbroker.Clock, efsbroker.DeprovisionOperationSpec, func(*efsbroker.OperationState)) efsbroker.Operation {
+					return fakeDeprovisionOperation
+				},
+			)
+
+			_, err := broker.Bind(ctx, "service-name", "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
+			Expect(err).To(HaveOccurred())
+		})
+	})
+
 })

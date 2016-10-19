@@ -113,7 +113,7 @@ func New(
 		},
 	}
 
-	// theBroker.restoreDynamicState()
+	theBroker.restoreDynamicState()
 
 	return &theBroker
 }
@@ -510,25 +510,25 @@ func readOnlyToMode(ro bool) string {
 	return "rw"
 }
 
-// func (b *broker) restoreDynamicState() {
-//	logger := b.logger.Session("restore-services")
-//	logger.Info("start")
-//	defer logger.Info("end")
+func (b *Broker) restoreDynamicState() {
+	logger := b.logger.Session("restore-services")
+	logger.Info("start")
+	defer logger.Info("end")
 
-//stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-//
-//serviceData, err := b.fs.ReadFile(stateFile)
-//if err != nil {
-//	b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
-//	return
-//}
+	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
 
-// dynamicState := dynamicState{}
-//err = json.Unmarshal(serviceData, &dynamicState)
-//if err != nil {
-//	b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
-//	return
-//}
-//logger.Info("state-restored", lager.Data{"state-file": stateFile})
-// b.dynamic = dynamicState
-// }
+	serviceData, err := b.ioutil.ReadFile(stateFile)
+	if err != nil {
+		b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
+		return
+	}
+
+	dynamicState := dynamicState{}
+	err = json.Unmarshal(serviceData, &dynamicState)
+	if err != nil {
+		b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
+		return
+	}
+	logger.Info("state-restored", lager.Data{"state-file": stateFile})
+	b.dynamic = dynamicState
+}

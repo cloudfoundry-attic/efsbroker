@@ -118,7 +118,7 @@ func New(
 	return &theBroker
 }
 
-func (b *Broker) Services() []brokerapi.Service {
+func (b *Broker) Services(_ context.Context) []brokerapi.Service {
 	logger := b.logger.Session("services")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -311,7 +311,7 @@ func (b *Broker) Update(context context.Context, instanceID string, details brok
 	panic("not implemented")
 }
 
-func (b *Broker) LastOperation(instanceID string, operationData string) (brokerapi.LastOperation, error) {
+func (b *Broker) LastOperation(_ context.Context, instanceID string, operationData string) (brokerapi.LastOperation, error) {
 	logger := b.logger.Session("last-operation").WithData(lager.Data{"instanceID": instanceID})
 	logger.Info("start")
 	defer logger.Info("end")

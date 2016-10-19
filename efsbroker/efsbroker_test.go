@@ -98,7 +98,7 @@ var _ = Describe("Broker", func() {
 
 		Context(".Services", func() {
 			It("returns the service catalog as appropriate", func() {
-				result := broker.Services()[0]
+				result := broker.Services(ctx)[0]
 				Expect(result.ID).To(Equal("service-id"))
 				Expect(result.Name).To(Equal("service-name"))
 				Expect(result.Description).To(Equal("Local service docs: https://code.cloudfoundry.org/efs-volume-release/"))
@@ -253,7 +253,7 @@ var _ = Describe("Broker", func() {
 			})
 
 			JustBeforeEach(func() {
-				op, err = broker.LastOperation(instanceID, "provision")
+				op, err = broker.LastOperation(ctx, instanceID, "provision")
 			})
 
 			Context("while aws reports the fs is creating", func() {
@@ -319,7 +319,7 @@ var _ = Describe("Broker", func() {
 
 			Context("when the instance doesn't exist", func() {
 				It("errors", func() {
-					op, err = broker.LastOperation("non-existant", "provision")
+					op, err = broker.LastOperation(ctx, "non-existant", "provision")
 					Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 				})
 			})
@@ -557,7 +557,7 @@ var _ = Describe("Broker", func() {
 					defer GinkgoRecover()
 					defer wg.Done()
 
-					broker.Services()
+					broker.Services(ctx)
 
 					opState := efsbroker.OperationState{
 						InstanceID:       uniqueName,

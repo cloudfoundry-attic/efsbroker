@@ -27,6 +27,8 @@ import (
 const (
 	PermissionVolumeMount = brokerapi.RequiredPermission("volume_mount")
 	DefaultContainerPath  = "/var/vcap/data"
+
+	RootPath = ":/"
 )
 
 var (
@@ -242,7 +244,10 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 	if err != nil {
 		return brokerapi.Binding{}, err
 	}
-	mountConfig := map[string]interface{}{"ip": ip}
+
+	source := ip + RootPath
+
+	mountConfig := map[string]interface{}{"source": source}
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response

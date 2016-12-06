@@ -45,6 +45,17 @@ var _ = Describe("Broker", func() {
 		ctx                      context.Context
 	)
 
+	const (
+		instanceID     = "some-instance-id"
+		bindingID      = "binding-id"
+		fsID           = "fake-fs-id"
+		mountID        = "fake-mt-id"
+		serviceName    = "service-name"
+		serviceID      = "service-id"
+		nfsServerIP    = "1.1.1.1"
+		fakeTargetPath = "/fake-dir"
+	)
+
 	BeforeEach(func() {
 		logger = lagertest.NewTestLogger("test-broker")
 		ctx = context.TODO()
@@ -57,23 +68,23 @@ var _ = Describe("Broker", func() {
 		fakeDeprovisionOperation = &efsfakes.FakeOperation{}
 
 		fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
-			FileSystemId: aws.String("fake-fs-id"),
+			FileSystemId: aws.String(fsID),
 		}, nil)
 		fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
 			FileSystems: []*efs.FileSystemDescription{{
-				FileSystemId:   aws.String("fake-fs-id"),
+				FileSystemId:   aws.String(fsID),
 				LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
 			}},
 		}, nil)
 		fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 			MountTargets: []*efs.MountTargetDescription{{
-				MountTargetId:  aws.String("fake-mt-id"),
+				MountTargetId:  aws.String(mountID),
 				LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
-				IpAddress:      aws.String("1.1.1.1"),
+				IpAddress:      aws.String(nfsServerIP),
 			}},
 		}, nil)
 		fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
-			MountTargetId: aws.String("fake-mt-id"),
+			MountTargetId: aws.String(mountID),
 		}, nil)
 	})
 
@@ -81,7 +92,7 @@ var _ = Describe("Broker", func() {
 		BeforeEach(func() {
 			broker = efsbroker.New(
 				logger,
-				"service-name", "service-id", "/fake-dir",
+				serviceName, serviceID, fakeTargetPath,
 				fakeOs,
 				fakeIoutil,
 				fakeClock,
@@ -101,8 +112,8 @@ var _ = Describe("Broker", func() {
 		Context(".Services", func() {
 			It("returns the service catalog as appropriate", func() {
 				result := broker.Services(ctx)[0]
-				Expect(result.ID).To(Equal("service-id"))
-				Expect(result.Name).To(Equal("service-name"))
+				Expect(result.ID).To(Equal(serviceID))
+				Expect(result.Name).To(Equal(serviceName))
 				Expect(result.Description).To(Equal("Local service docs: https://code.cloudfoundry.org/efs-volume-release/"))
 				Expect(result.Bindable).To(Equal(true))
 				Expect(result.PlanUpdatable).To(Equal(false))
@@ -129,7 +140,6 @@ var _ = Describe("Broker", func() {
 			)
 
 			BeforeEach(func() {
-				instanceID = "some-instance-id"
 				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
 			})
@@ -166,7 +176,7 @@ var _ = Describe("Broker", func() {
 				// enclosing context creates initial instance
 				JustBeforeEach(func() {
 					provisionDetails.ServiceID = "different-service-id"
-					_, err = broker.Provision(ctx, "some-instance-id", provisionDetails, true)
+					_, err = broker.Provision(ctx, instanceID, provisionDetails, true)
 				})
 
 				It("should error", func() {
@@ -187,7 +197,6 @@ var _ = Describe("Broker", func() {
 			)
 
 			BeforeEach(func() {
-				instanceID = "some-instance-id"
 				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
 
@@ -248,7 +257,6 @@ var _ = Describe("Broker", func() {
 			)
 
 			BeforeEach(func() {
-				instanceID = "some-instance-id"
 				fsID = "12345"
 
 				mountID = "some-mount-id"
@@ -329,13 +337,11 @@ var _ = Describe("Broker", func() {
 
 		Context(".Bind", func() {
 			var (
-				instanceID  string
 				opState     efsbroker.OperationState
 				bindDetails brokerapi.BindDetails
 			)
 
 			BeforeEach(func() {
-				instanceID = "some-instance-id"
 				opState = efsbroker.OperationState{
 					InstanceID:       instanceID,
 					FsID:             "foo",
@@ -343,7 +349,7 @@ var _ = Describe("Broker", func() {
 					MountTargetID:    "bar",
 					MountTargetState: efs.LifeCycleStateAvailable,
 					MountPermsSet:    true,
-					MountTargetIp:    "1.2.3.4",
+					MountTargetIp:    nfsServerIP,
 				}
 
 				broker.ProvisionEvent(&opState)
@@ -352,91 +358,99 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("includes empty credentials to prevent CAPI crash", func() {
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(binding.Credentials).NotTo(BeNil())
 			})
 
 			It("uses the instance id in the default container path", func() {
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(binding.VolumeMounts[0].ContainerDir).To(Equal("/var/vcap/data/some-instance-id"))
 			})
 
 			It("flows container path through", func() {
 				bindDetails.Parameters["mount"] = "/var/vcap/otherdir/something"
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(binding.VolumeMounts[0].ContainerDir).To(Equal("/var/vcap/otherdir/something"))
 			})
 
 			It("uses rw as its default mode", func() {
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(binding.VolumeMounts[0].Mode).To(Equal("rw"))
 			})
 
 			It("sets mode to `r` when readonly is true", func() {
 				bindDetails.Parameters["readonly"] = true
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(binding.VolumeMounts[0].Mode).To(Equal("r"))
 			})
 
+			It("should send the ip in the Opts", func() {
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(len(binding.VolumeMounts)).To(Equal(1))
+				Expect(binding.VolumeMounts[0].Device.MountConfig["source"]).To(Equal(nfsServerIP + efsbroker.RootPath))
+			})
+
 			It("should write state", func() {
-				_, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				_, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
+				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.1.1.1","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
 			})
 
 			It("errors if mode is not a boolean", func() {
 				bindDetails.Parameters["readonly"] = ""
-				_, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				_, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).To(Equal(brokerapi.ErrRawParamsInvalid))
 			})
 
 			It("fills in the driver name", func() {
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(binding.VolumeMounts[0].Driver).To(Equal("efsdriver"))
 			})
 
 			It("fills in the group id", func() {
-				binding, err := broker.Bind(ctx, "some-instance-id", "binding-id", bindDetails)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(binding.VolumeMounts[0].Device.VolumeId).To(Equal("some-instance-id"))
+				Expect(binding.VolumeMounts[0].Device.VolumeId).To(Equal(instanceID))
 			})
 
 			Context("when the binding already exists", func() {
 				BeforeEach(func() {
-					_, err := broker.Bind(ctx, "some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+					_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 					Expect(err).NotTo(HaveOccurred())
 				})
 
 				It("doesn't error when binding the same details", func() {
-					_, err := broker.Bind(ctx, "some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+					_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 					Expect(err).NotTo(HaveOccurred())
 				})
 
 				It("errors when binding different details", func() {
-					_, err := broker.Bind(ctx, "some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "different"})
+					_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "different"})
 					Expect(err).To(Equal(brokerapi.ErrBindingAlreadyExists))
 				})
 			})
 
 			It("errors when the service instance does not exist", func() {
-				_, err := broker.Bind(ctx, "nonexistent-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+				_, err := broker.Bind(ctx, "nonexistent-instance-id", bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 			})
 
 			It("errors when the app guid is not provided", func() {
-				_, err := broker.Bind(ctx, "some-instance-id", "binding-id", brokerapi.BindDetails{})
+				_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{})
 				Expect(err).To(Equal(brokerapi.ErrAppGuidNotProvided))
 			})
 		})
@@ -450,6 +464,7 @@ var _ = Describe("Broker", func() {
 
 			BeforeEach(func() {
 				instanceID = "some-instance-id"
+
 				opState = efsbroker.OperationState{
 					InstanceID:       instanceID,
 					FsID:             "foo",
@@ -462,26 +477,26 @@ var _ = Describe("Broker", func() {
 
 				broker.ProvisionEvent(&opState)
 
-				_, err = broker.Bind(ctx, "some-instance-id", "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+				_, err = broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("unbinds a bound service instance from an app", func() {
-				err := broker.Unbind(ctx, "some-instance-id", "binding-id", brokerapi.UnbindDetails{})
+				err := broker.Unbind(ctx, instanceID, bindingID, brokerapi.UnbindDetails{})
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("fails when trying to unbind a instance that has not been provisioned", func() {
-				err := broker.Unbind(ctx, "some-other-instance-id", "binding-id", brokerapi.UnbindDetails{})
+				err := broker.Unbind(ctx, "some-other-instance-id", bindingID, brokerapi.UnbindDetails{})
 				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 			})
 
 			It("fails when trying to unbind a binding that has not been bound", func() {
-				err := broker.Unbind(ctx, "some-instance-id", "some-other-binding-id", brokerapi.UnbindDetails{})
+				err := broker.Unbind(ctx, instanceID, "some-other-binding-id", brokerapi.UnbindDetails{})
 				Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
 			})
 			It("should write state", func() {
-				err := broker.Unbind(ctx, "some-instance-id", "binding-id", brokerapi.UnbindDetails{})
+				err := broker.Unbind(ctx, instanceID, bindingID, brokerapi.UnbindDetails{})
 				Expect(err).NotTo(HaveOccurred())
 
 				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
@@ -572,7 +587,7 @@ var _ = Describe("Broker", func() {
 
 					broker.ProvisionEvent(&opState)
 
-					_, err := broker.Bind(ctx, uniqueName, "binding-id", brokerapi.BindDetails{AppGUID: "guid"})
+					_, err := broker.Bind(ctx, uniqueName, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 					Expect(err).NotTo(HaveOccurred())
 
 					err = broker.Unbind(ctx, uniqueName, "some-other-binding-id", brokerapi.UnbindDetails{})
@@ -597,8 +612,8 @@ var _ = Describe("Broker", func() {
 		It("should be able to bind to previously created service", func() {
 			fileContents, err := json.Marshal(dynamicState{
 				InstanceMap: map[string]efsbroker.EFSInstance{
-					"service-name": {
-						EfsId:         "service-id",
+					serviceName: {
+						EfsId:         serviceID,
 						FsState:       efs.LifeCycleStateAvailable,
 						MountId:       "foo",
 						MountState:    efs.LifeCycleStateAvailable,
@@ -614,7 +629,7 @@ var _ = Describe("Broker", func() {
 
 			broker = efsbroker.New(
 				logger,
-				"service-name", "service-id", "/fake-dir",
+				serviceName, serviceID, fakeTargetPath,
 				fakeOs,
 				fakeIoutil,
 				fakeClock,
@@ -630,7 +645,7 @@ var _ = Describe("Broker", func() {
 				},
 			)
 
-			_, err = broker.Bind(ctx, "service-name", "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
+			_, err = broker.Bind(ctx, serviceName, "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -640,7 +655,7 @@ var _ = Describe("Broker", func() {
 
 			broker = efsbroker.New(
 				logger,
-				"service-name", "service-id", "/fake-dir",
+				serviceName, serviceID, fakeTargetPath,
 				fakeOs,
 				fakeIoutil,
 				fakeClock,
@@ -656,7 +671,7 @@ var _ = Describe("Broker", func() {
 				},
 			)
 
-			_, err := broker.Bind(ctx, "service-name", "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
+			_, err := broker.Bind(ctx, serviceName, "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
 			Expect(err).To(HaveOccurred())
 		})
 	})

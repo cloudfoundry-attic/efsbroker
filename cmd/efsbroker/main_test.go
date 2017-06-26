@@ -106,7 +106,7 @@ func (r failRunner) Run(sigChan <-chan os.Signal, ready chan<- struct{}) error {
 			}
 
 			Expect(string(allOutput.Contents())).To(ContainSubstring(r.StartCheck))
-			Expect(session.ExitCode()).To(Equal(1), fmt.Sprintf("Expected process to exit with 1, got: %d", session.ExitCode()))
+			Expect(session.ExitCode()).NotTo(Equal(0), fmt.Sprintf("Expected process not to exit with 0, got: %d", session.ExitCode()))
 			return nil
 		}
 	}

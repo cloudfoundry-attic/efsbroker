@@ -229,7 +229,14 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 		return brokerapi.Binding{}, brokerapi.ErrAppGuidNotProvided
 	}
 
-	mode, err := evaluateMode(details.Parameters)
+	var params map[string]interface{}
+	if len(details.RawParameters) > 0 {
+		if err := json.Unmarshal(details.RawParameters, &params); err != nil {
+			return brokerapi.Binding{}, err
+		}
+	}
+
+	mode, err := evaluateMode(params)
 	if err != nil {
 		return brokerapi.Binding{}, err
 	}
@@ -252,7 +259,7 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response
 		VolumeMounts: []brokerapi.VolumeMount{{
-			ContainerDir: evaluateContainerPath(details.Parameters, instanceID),
+			ContainerDir: evaluateContainerPath(params, instanceID),
 			Mode:         mode,
 			Driver:       "efsdriver",
 			DeviceType:   "shared",

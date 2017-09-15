@@ -354,7 +354,7 @@ var _ = Describe("Broker", func() {
 
 				broker.ProvisionEvent(&opState)
 
-				bindDetails = brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}}
+				bindDetails = brokerapi.BindDetails{AppGUID: "guid"}
 			})
 
 			It("includes empty credentials to prevent CAPI crash", func() {
@@ -371,7 +371,10 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("flows container path through", func() {
-				bindDetails.Parameters["mount"] = "/var/vcap/otherdir/something"
+				var err error
+				params := map[string]interface{}{"mount": "/var/vcap/otherdir/something"}
+				bindDetails.RawParameters, err = json.Marshal(params)
+				Expect(err).NotTo(HaveOccurred())
 				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(binding.VolumeMounts[0].ContainerDir).To(Equal("/var/vcap/otherdir/something"))
@@ -384,7 +387,10 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("sets mode to `r` when readonly is true", func() {
-				bindDetails.Parameters["readonly"] = true
+				var err error
+				params := map[string]interface{}{"readonly": true}
+				bindDetails.RawParameters, err = json.Marshal(params)
+				Expect(err).NotTo(HaveOccurred())
 				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
@@ -408,8 +414,11 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("errors if mode is not a boolean", func() {
-				bindDetails.Parameters["readonly"] = ""
-				_, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
+				var err error
+				params := map[string]interface{}{"readonly": "true"}
+				bindDetails.RawParameters, err = json.Marshal(params)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).To(Equal(brokerapi.ErrRawParamsInvalid))
 			})
 
@@ -645,7 +654,7 @@ var _ = Describe("Broker", func() {
 				},
 			)
 
-			_, err = broker.Bind(ctx, serviceName, "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
+			_, err = broker.Bind(ctx, serviceName, "whatever", brokerapi.BindDetails{AppGUID: "guid"})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -671,7 +680,7 @@ var _ = Describe("Broker", func() {
 				},
 			)
 
-			_, err := broker.Bind(ctx, serviceName, "whatever", brokerapi.BindDetails{AppGUID: "guid", Parameters: map[string]interface{}{}})
+			_, err := broker.Bind(ctx, serviceName, "whatever", brokerapi.BindDetails{AppGUID: "guid"})
 			Expect(err).To(HaveOccurred())
 		})
 	})

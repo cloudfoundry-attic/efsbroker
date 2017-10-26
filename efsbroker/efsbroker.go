@@ -4,9 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"reflect"
 
 	"sync"
 
@@ -16,9 +13,9 @@ import (
 
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
-	"code.cloudfoundry.org/goshims/ioutilshim"
 	"code.cloudfoundry.org/goshims/osshim"
 	"code.cloudfoundry.org/lager"
+	"code.cloudfoundry.org/service-broker-store/brokerstore"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
@@ -69,23 +66,22 @@ type Broker struct {
 	securityGroup        string
 	dataDir              string
 	os                   osshim.Os
-	ioutil               ioutilshim.Ioutil
 	mutex                lock
 	clock                clock.Clock
 	efsTools             efsvoltools.VolTools
 	ProvisionOperation   func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation
 	DeprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation
 
-	static  staticState
-	dynamic dynamicState
+	static staticState
+	store  brokerstore.Store
 }
 
 func New(
 	logger lager.Logger,
 	serviceName, serviceId, dataDir string,
 	os osshim.Os,
-	ioutil ioutilshim.Ioutil,
 	clock clock.Clock,
+	store brokerstore.Store,
 	efsService EFSService, subnetIds []string, securityGroup string,
 	efsTools efsvoltools.VolTools,
 	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation,
@@ -96,12 +92,12 @@ func New(
 		logger:               logger,
 		dataDir:              dataDir,
 		os:                   os,
-		ioutil:               ioutil,
 		efsService:           efsService,
 		subnetIds:            subnetIds,
 		securityGroup:        securityGroup,
 		mutex:                &sync.Mutex{},
 		clock:                clock,
+		store:                store,
 		efsTools:             efsTools,
 		ProvisionOperation:   provisionOperation,
 		DeprovisionOperation: deprovisionOperation,
@@ -109,13 +105,9 @@ func New(
 			ServiceName: serviceName,
 			ServiceId:   serviceId,
 		},
-		dynamic: dynamicState{
-			InstanceMap: map[string]EFSInstance{},
-			BindingMap:  map[string]brokerapi.BindDetails{},
-		},
 	}
 
-	theBroker.restoreDynamicState()
+	theBroker.store.Restore(logger)
 
 	return &theBroker
 }
@@ -148,23 +140,42 @@ func (b *Broker) Services(_ context.Context) []brokerapi.Service {
 	}}
 }
 
-func (b *Broker) Provision(context context.Context, instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (brokerapi.ProvisionedServiceSpec, error) {
+func (b *Broker) Provision(context context.Context, instanceID string, details brokerapi.ProvisionDetails, asyncAllowed bool) (_ brokerapi.ProvisionedServiceSpec, e error) {
 	logger := b.logger.Session("provision").WithData(lager.Data{"instanceID": instanceID})
 	logger.Info("start")
 	defer logger.Info("end")
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	defer func() {
+		out := b.store.Save(logger)
+		if e == nil {
+			e = out
+		}
+	}()
 
 	if !asyncAllowed {
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrAsyncRequired
 	}
 
-	if b.instanceConflicts(details, instanceID) {
+	efsInstance := EFSInstance{details, "", "", "", "", false, "", nil}
+
+	instanceDetails := brokerstore.ServiceInstance{
+		details.ServiceID,
+		details.PlanID,
+		details.OrganizationGUID,
+		details.SpaceGUID,
+		efsInstance,
+	}
+
+	if b.instanceConflicts(instanceDetails, instanceID) {
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrInstanceAlreadyExists
 	}
 
-	b.dynamic.InstanceMap[instanceID] = EFSInstance{details, "", "", "", "", false, "", nil}
+	err := b.store.CreateInstanceDetails(instanceID, instanceDetails)
+	if err != nil {
+		return brokerapi.ProvisionedServiceSpec{}, fmt.Errorf("failed to store instance details %s", instanceID)
+	}
 
 	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnetIds, b.securityGroup, b.clock, b.ProvisionEvent)
 
@@ -173,23 +184,34 @@ func (b *Broker) Provision(context context.Context, instanceID string, details b
 	return brokerapi.ProvisionedServiceSpec{IsAsync: true, OperationData: "provision"}, nil
 }
 
-func (b *Broker) Deprovision(context context.Context, instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (brokerapi.DeprovisionServiceSpec, error) {
+func (b *Broker) Deprovision(context context.Context, instanceID string, details brokerapi.DeprovisionDetails, asyncAllowed bool) (_ brokerapi.DeprovisionServiceSpec, e error) {
 	logger := b.logger.Session("deprovision")
 	logger.Info("start")
 	defer logger.Info("end")
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	defer func() {
+		out := b.store.Save(logger)
+		if e == nil {
+			e = out
+		}
+	}()
 
-	instance, instanceExists := b.dynamic.InstanceMap[instanceID]
-	if !instanceExists {
+	instance, err := b.store.RetrieveInstanceDetails(instanceID)
+	if err != nil {
 		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
+	}
+
+	efsInstance, ok := instance.ServiceFingerPrint.(EFSInstance)
+	if !ok {
+		return brokerapi.DeprovisionServiceSpec{}, errors.New("failed to casting interface back to EFSInstance")
 	}
 
 	spec := DeprovisionOperationSpec{
 		InstanceID:    instanceID,
-		FsID:          instance.EfsId,
-		MountTargetID: instance.MountId,
+		FsID:          efsInstance.EfsId,
+		MountTargetID: efsInstance.MountId,
 	}
 	operation := b.DeprovisionOperation(logger, b.efsService, b.clock, spec, b.DeprovisionEvent)
 
@@ -198,30 +220,22 @@ func (b *Broker) Deprovision(context context.Context, instanceID string, details
 	return brokerapi.DeprovisionServiceSpec{IsAsync: true, OperationData: "deprovision"}, nil
 }
 
-func (b *Broker) setErrorOnInstance(instanceId string, err error) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
-	instance, instanceExists := b.dynamic.InstanceMap[instanceId]
-	if instanceExists {
-		instance.Err = err
-		b.dynamic.InstanceMap[instanceId] = instance
-	}
-	return
-}
-
-func (b *Broker) Bind(context context.Context, instanceID string, bindingID string, details brokerapi.BindDetails) (brokerapi.Binding, error) {
+func (b *Broker) Bind(context context.Context, instanceID string, bindingID string, details brokerapi.BindDetails) (_ brokerapi.Binding, e error) {
 	logger := b.logger.Session("bind")
 	logger.Info("start")
 	defer logger.Info("end")
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	defer func() {
+		out := b.store.Save(logger)
+		if e == nil {
+			e = out
+		}
+	}()
 
-	defer b.persist(b.dynamic)
-
-	fs, ok := b.dynamic.InstanceMap[instanceID]
-	if !ok {
+	instanceDetails, err := b.store.RetrieveInstanceDetails(instanceID)
+	if err != nil {
 		return brokerapi.Binding{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
@@ -245,9 +259,17 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 		return brokerapi.Binding{}, brokerapi.ErrBindingAlreadyExists
 	}
 
-	b.dynamic.BindingMap[bindingID] = details
+	err = b.store.CreateBindingDetails(bindingID, details)
+	if err != nil {
+		return brokerapi.Binding{}, err
+	}
 
-	ip, err := b.getMountIp(fs.EfsId)
+	efsInstance, ok := instanceDetails.ServiceFingerPrint.(EFSInstance)
+	if !ok {
+		return brokerapi.Binding{}, errors.New("failed to casting interface back to EFSInstance")
+	}
+
+	ip, err := b.getMountIp(efsInstance.EfsId)
 	if err != nil {
 		return brokerapi.Binding{}, err
 	}
@@ -296,26 +318,31 @@ func (b *Broker) getMountIp(fsId string) (string, error) {
 	return mountConfig, nil
 }
 
-func (b *Broker) Unbind(context context.Context, instanceID string, bindingID string, details brokerapi.UnbindDetails) error {
+func (b *Broker) Unbind(context context.Context, instanceID string, bindingID string, details brokerapi.UnbindDetails) (e error) {
 	logger := b.logger.Session("unbind")
 	logger.Info("start")
 	defer logger.Info("end")
 
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	defer func() {
+		out := b.store.Save(logger)
+		if e == nil {
+			e = out
+		}
+	}()
 
-	defer b.persist(b.dynamic)
-
-	if _, ok := b.dynamic.InstanceMap[instanceID]; !ok {
+	if _, err := b.store.RetrieveInstanceDetails(instanceID); err != nil {
 		return brokerapi.ErrInstanceDoesNotExist
 	}
 
-	if _, ok := b.dynamic.BindingMap[bindingID]; !ok {
+	if _, err := b.store.RetrieveBindingDetails(bindingID); err != nil {
 		return brokerapi.ErrBindingDoesNotExist
 	}
 
-	delete(b.dynamic.BindingMap, bindingID)
-
+	if err := b.store.DeleteBindingDetails(bindingID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -333,25 +360,36 @@ func (b *Broker) LastOperation(_ context.Context, instanceID string, operationDa
 
 	switch operationData {
 	case "provision":
-		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
-		if !instanceExists {
+		instance, err := b.store.RetrieveInstanceDetails(instanceID)
+
+		if err != nil {
 			logger.Info("instance-not-found")
 			return brokerapi.LastOperation{}, brokerapi.ErrInstanceDoesNotExist
 		}
 
-		if instance.Err != nil {
-			logger.Info(fmt.Sprintf("last-operation-error %#v", instance.Err))
-			return brokerapi.LastOperation{State: brokerapi.Failed, Description: instance.Err.Error()}, nil
+		efsInstance, ok := instance.ServiceFingerPrint.(EFSInstance)
+		if !ok {
+			return brokerapi.LastOperation{}, errors.New("failed to casting interface back to EFSInstance")
 		}
 
-		logger.Debug(fmt.Sprintf("Instance data %#v", instance))
-		return stateToLastOperation(instance), nil
+		if efsInstance.Err != nil {
+			logger.Info(fmt.Sprintf("last-operation-error %#v", efsInstance.Err))
+			return brokerapi.LastOperation{State: brokerapi.Failed, Description: efsInstance.Err.Error()}, nil
+		}
+
+		logger.Debug(fmt.Sprintf("Instance data %#v", efsInstance))
+		return stateToLastOperation(efsInstance), nil
 	case "deprovision":
-		instance, instanceExists := b.dynamic.InstanceMap[instanceID]
-		if !instanceExists {
+		instance, err := b.store.RetrieveInstanceDetails(instanceID)
+
+		if err != nil {
 			return brokerapi.LastOperation{State: brokerapi.Succeeded}, nil
 		} else {
-			if instance.Err != nil {
+			efsInstance, ok := instance.ServiceFingerPrint.(EFSInstance)
+			if !ok {
+				return brokerapi.LastOperation{}, errors.New("failed to casting interface back to EFSInstance")
+			}
+			if efsInstance.Err != nil {
 				return brokerapi.LastOperation{State: brokerapi.Failed}, nil
 			} else {
 				return brokerapi.LastOperation{State: brokerapi.InProgress}, nil
@@ -369,14 +407,24 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 	defer logger.Info("end")
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-
-	defer b.persist(b.dynamic)
+	defer func() {
+		out := b.store.Save(logger)
+		if out != nil {
+			logger.Error("store save failed", out)
+		}
+	}()
 
 	if opState.Err != nil {
 		logger.Error("Last provision failed", opState.Err)
 	}
 
-	efsInstance, _ := b.dynamic.InstanceMap[opState.InstanceID]
+	instance, err := b.store.RetrieveInstanceDetails(opState.InstanceID)
+	if err != nil {
+		logger.Error("instance-not-found", err)
+	}
+
+	var efsInstance EFSInstance
+
 	efsInstance.EfsId = opState.FsID
 	efsInstance.FsState = opState.FsState
 	efsInstance.MountId = opState.MountTargetID
@@ -384,7 +432,20 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 	efsInstance.MountState = opState.MountTargetState
 	efsInstance.MountPermsSet = opState.MountPermsSet
 	efsInstance.Err = opState.Err
-	b.dynamic.InstanceMap[opState.InstanceID] = efsInstance
+
+	instance.ServiceFingerPrint = efsInstance
+
+	err = b.store.DeleteInstanceDetails(opState.InstanceID)
+	if err != nil {
+		logger.Error("failed to delete instance", err)
+		return
+	}
+
+	err = b.store.CreateInstanceDetails(opState.InstanceID, instance)
+	if err != nil {
+		logger.Error("failed to store instance details", err)
+		return
+	}
 }
 
 func (b *Broker) DeprovisionEvent(opState *OperationState) {
@@ -393,15 +454,49 @@ func (b *Broker) DeprovisionEvent(opState *OperationState) {
 	defer logger.Info("end")
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
+	defer func() {
+		out := b.store.Save(logger)
+		if out != nil {
+			logger.Error("store save failed", out)
+		}
+	}()
 
-	defer b.persist(b.dynamic)
+	var err error
 
 	if opState.Err == nil {
-		delete(b.dynamic.InstanceMap, opState.InstanceID)
+		err = b.store.DeleteInstanceDetails(opState.InstanceID)
+		if err != nil {
+			logger.Error("failed to delete instance", err)
+			return
+		}
 	} else {
-		efsInstance := b.dynamic.InstanceMap[opState.InstanceID]
+		instance, err := b.store.RetrieveInstanceDetails(opState.InstanceID)
+		if err != nil {
+			logger.Error("instance-not-found", err)
+			return
+		}
+
+		efsInstance, ok := instance.ServiceFingerPrint.(EFSInstance)
+		if !ok {
+			logger.Error("error", errors.New("failed to casting interface back to EFSInstance"))
+			return
+		}
+
 		efsInstance.Err = opState.Err
-		b.dynamic.InstanceMap[opState.InstanceID] = efsInstance
+
+		instance.ServiceFingerPrint = efsInstance
+
+		err = b.store.DeleteInstanceDetails(opState.InstanceID)
+		if err != nil {
+			logger.Error("failed to delete instance", err)
+			return
+		}
+
+		err = b.store.CreateInstanceDetails(opState.InstanceID, instance)
+		if err != nil {
+			logger.Error("failed to store instance details", err)
+			return
+		}
 	}
 }
 
@@ -448,44 +543,12 @@ func stateToDescription(instance EFSInstance) string {
 	return desc
 }
 
-func (b *Broker) instanceConflicts(details brokerapi.ProvisionDetails, instanceID string) bool {
-	if existing, ok := b.dynamic.InstanceMap[instanceID]; ok {
-		if !reflect.DeepEqual(details, existing) {
-			return true
-		}
-	}
-	return false
+func (b *Broker) instanceConflicts(details brokerstore.ServiceInstance, instanceID string) bool {
+	return b.store.IsInstanceConflict(instanceID, brokerstore.ServiceInstance(details))
 }
 
 func (b *Broker) bindingConflicts(bindingID string, details brokerapi.BindDetails) bool {
-	if existing, ok := b.dynamic.BindingMap[bindingID]; ok {
-		if !reflect.DeepEqual(details, existing) {
-			return true
-		}
-	}
-	return false
-}
-
-func (b *Broker) persist(state interface{}) {
-	logger := b.logger.Session("serialize-state")
-	logger.Info("start")
-	defer logger.Info("end")
-
-	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-
-	stateData, err := json.Marshal(state)
-	if err != nil {
-		b.logger.Error("failed-to-marshall-state", err)
-		return
-	}
-
-	err = b.ioutil.WriteFile(stateFile, stateData, os.ModePerm)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-write-state-file: %s", stateFile), err)
-		return
-	}
-
-	logger.Info("state-saved", lager.Data{"state-file": stateFile})
+	return b.store.IsBindingConflict(bindingID, details)
 }
 
 func planIDToPerformanceMode(planID string) *string {
@@ -520,27 +583,4 @@ func readOnlyToMode(ro bool) string {
 		return "r"
 	}
 	return "rw"
-}
-
-func (b *Broker) restoreDynamicState() {
-	logger := b.logger.Session("restore-services")
-	logger.Info("start")
-	defer logger.Info("end")
-
-	stateFile := filepath.Join(b.dataDir, fmt.Sprintf("%s-services.json", b.static.ServiceName))
-
-	serviceData, err := b.ioutil.ReadFile(stateFile)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-read-state-file: %s", stateFile), err)
-		return
-	}
-
-	dynamicState := dynamicState{}
-	err = json.Unmarshal(serviceData, &dynamicState)
-	if err != nil {
-		b.logger.Error(fmt.Sprintf("failed-to-unmarshall-state from state-file: %s", stateFile), err)
-		return
-	}
-	logger.Info("state-restored", lager.Data{"state-file": stateFile})
-	b.dynamic = dynamicState
 }

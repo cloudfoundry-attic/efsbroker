@@ -1,14 +1,14 @@
 package efsbroker_test
 
 import (
+	"errors"
+
 	"code.cloudfoundry.org/lager/lagertest"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/pivotal-cf/brokerapi"
 
 	"time"
-
-	"sync"
 
 	"context"
 
@@ -19,9 +19,11 @@ import (
 	"code.cloudfoundry.org/efsbroker/efsbroker/efsfakes"
 	"code.cloudfoundry.org/efsdriver/efsdriverfakes"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
-	"code.cloudfoundry.org/goshims/ioutilshim/ioutil_fake"
 	"code.cloudfoundry.org/goshims/osshim/os_fake"
 	"code.cloudfoundry.org/lager"
+	"code.cloudfoundry.org/service-broker-store/brokerstore"
+	"code.cloudfoundry.org/service-broker-store/brokerstore/brokerstorefakes"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -35,7 +37,6 @@ var _ = Describe("Broker", func() {
 	var (
 		broker                   *efsbroker.Broker
 		fakeOs                   *os_fake.FakeOs
-		fakeIoutil               *ioutil_fake.FakeIoutil
 		fakeEFSService           *efsfakes.FakeEFSService
 		fakeClock                *fakeclock.FakeClock
 		fakeVolTools             *efsdriverfakes.FakeVolTools
@@ -43,6 +44,7 @@ var _ = Describe("Broker", func() {
 		fakeDeprovisionOperation *efsfakes.FakeOperation
 		logger                   lager.Logger
 		ctx                      context.Context
+		fakeStore                *brokerstorefakes.FakeStore
 	)
 
 	const (
@@ -60,12 +62,12 @@ var _ = Describe("Broker", func() {
 		logger = lagertest.NewTestLogger("test-broker")
 		ctx = context.TODO()
 		fakeOs = &os_fake.FakeOs{}
-		fakeIoutil = &ioutil_fake.FakeIoutil{}
 		fakeClock = fakeclock.NewFakeClock(time.Unix(123, 456))
 		fakeEFSService = &efsfakes.FakeEFSService{}
 		fakeVolTools = &efsdriverfakes.FakeVolTools{}
 		fakeProvisionOperation = &efsfakes.FakeOperation{}
 		fakeDeprovisionOperation = &efsfakes.FakeOperation{}
+		fakeStore = &brokerstorefakes.FakeStore{}
 
 		fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
 			FileSystemId: aws.String(fsID),
@@ -94,8 +96,8 @@ var _ = Describe("Broker", func() {
 				logger,
 				serviceName, serviceID, fakeTargetPath,
 				fakeOs,
-				fakeIoutil,
 				fakeClock,
+				fakeStore,
 				fakeEFSService,
 				[]string{"fake-subnet-id"},
 				"fake-security-group",
@@ -174,9 +176,8 @@ var _ = Describe("Broker", func() {
 
 			Context("when the service instance already exists with different details", func() {
 				// enclosing context creates initial instance
-				JustBeforeEach(func() {
-					provisionDetails.ServiceID = "different-service-id"
-					_, err = broker.Provision(ctx, instanceID, provisionDetails, true)
+				BeforeEach(func() {
+					fakeStore.IsInstanceConflictReturns(true)
 				})
 
 				It("should error", func() {
@@ -190,8 +191,7 @@ var _ = Describe("Broker", func() {
 				instanceID       string
 				asyncAllowed     bool
 				provisionDetails brokerapi.ProvisionDetails
-
-				opState efsbroker.OperationState
+				fakeInstance     brokerstore.ServiceInstance
 
 				err error
 			)
@@ -200,18 +200,24 @@ var _ = Describe("Broker", func() {
 				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
 
-				opState = efsbroker.OperationState{
-					InstanceID:       instanceID,
-					FsID:             "foo",
-					FsState:          efs.LifeCycleStateAvailable,
-					MountTargetID:    "bar",
-					MountTargetState: efs.LifeCycleStateAvailable,
-					MountTargetIp:    "1.2.3.4",
+				fakeInstance = brokerstore.ServiceInstance{
+					ServiceID:        instanceID,
+					PlanID:           "fake-plan-id",
+					OrganizationGUID: "fake-org-guid",
+					SpaceGUID:        "fake-space-guid",
+					ServiceFingerPrint: efsbroker.EFSInstance{
+						EfsId:      "foo",
+						FsState:    efs.LifeCycleStateAvailable,
+						MountId:    "bar",
+						MountIp:    "1.2.3.4",
+						MountState: efs.LifeCycleStateAvailable,
+					},
 				}
+
 			})
 
 			BeforeEach(func() {
-				broker.ProvisionEvent(&opState)
+				fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 			})
 
 			JustBeforeEach(func() {
@@ -226,7 +232,7 @@ var _ = Describe("Broker", func() {
 
 			Context("when the instance does not exist", func() {
 				BeforeEach(func() {
-					instanceID = "does-not-exist"
+					fakeStore.RetrieveInstanceDetailsReturns(brokerstore.ServiceInstance{}, errors.New("Not Found"))
 				})
 
 				It("should fail", func() {
@@ -247,19 +253,18 @@ var _ = Describe("Broker", func() {
 
 		Context(".LastOperation", func() {
 			var (
-				instanceID string
-				fsID       string
-
-				mountID string
-
-				op  brokerapi.LastOperation
-				err error
+				instanceID   string
+				fsID         string
+				mountID      string
+				err          error
+				op           brokerapi.LastOperation
+				fakeInstance brokerstore.ServiceInstance
 			)
 
 			BeforeEach(func() {
 				fsID = "12345"
-
 				mountID = "some-mount-id"
+
 			})
 
 			JustBeforeEach(func() {
@@ -268,7 +273,19 @@ var _ = Describe("Broker", func() {
 
 			Context("while aws reports the fs is creating", func() {
 				BeforeEach(func() {
-					broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "creating"})
+
+					fakeInstance = brokerstore.ServiceInstance{
+						ServiceID:        instanceID,
+						PlanID:           "fake-plan-id",
+						OrganizationGUID: "fake-org-guid",
+						SpaceGUID:        "fake-space-guid",
+						ServiceFingerPrint: efsbroker.EFSInstance{
+							EfsId:   fsID,
+							FsState: "creating",
+						},
+					}
+
+					fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 				})
 
 				It("returns in progress", func() {
@@ -282,7 +299,17 @@ var _ = Describe("Broker", func() {
 			Context("while aws reports the fs is available", func() {
 				Context("but aws reports that there are no mount targets", func() {
 					BeforeEach(func() {
-						broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "available"})
+						fakeInstance = brokerstore.ServiceInstance{
+							ServiceID:        instanceID,
+							PlanID:           "fake-plan-id",
+							OrganizationGUID: "fake-org-guid",
+							SpaceGUID:        "fake-space-guid",
+							ServiceFingerPrint: efsbroker.EFSInstance{
+								EfsId:   fsID,
+								FsState: "available",
+							},
+						}
+						fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 					})
 
 					It("returns in progress", func() {
@@ -294,7 +321,19 @@ var _ = Describe("Broker", func() {
 
 				Context("but aws reports the mount target is still creating", func() {
 					BeforeEach(func() {
-						broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "available", MountTargetID: mountID, MountTargetState: "creating"})
+						fakeInstance = brokerstore.ServiceInstance{
+							ServiceID:        instanceID,
+							PlanID:           "fake-plan-id",
+							OrganizationGUID: "fake-org-guid",
+							SpaceGUID:        "fake-space-guid",
+							ServiceFingerPrint: efsbroker.EFSInstance{
+								EfsId:      fsID,
+								FsState:    "available",
+								MountId:    mountID,
+								MountState: "creating",
+							},
+						}
+						fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 					})
 
 					It("returns in progress", func() {
@@ -305,7 +344,20 @@ var _ = Describe("Broker", func() {
 
 				Context("and aws reports the mount target is available", func() {
 					BeforeEach(func() {
-						broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "available", MountTargetID: mountID, MountTargetState: "available", MountTargetIp: "1.2.3.4"})
+						fakeInstance = brokerstore.ServiceInstance{
+							ServiceID:        instanceID,
+							PlanID:           "fake-plan-id",
+							OrganizationGUID: "fake-org-guid",
+							SpaceGUID:        "fake-space-guid",
+							ServiceFingerPrint: efsbroker.EFSInstance{
+								EfsId:      fsID,
+								FsState:    "available",
+								MountId:    mountID,
+								MountState: "available",
+								MountIp:    "1.2.3.4",
+							},
+						}
+						fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 					})
 
 					It("returns in progress", func() {
@@ -315,7 +367,21 @@ var _ = Describe("Broker", func() {
 
 					Context("and permissions were set on the mount", func() {
 						BeforeEach(func() {
-							broker.ProvisionEvent(&efsbroker.OperationState{InstanceID: instanceID, FsID: fsID, FsState: "available", MountTargetID: mountID, MountTargetState: "available", MountPermsSet: true, MountTargetIp: "1.2.3.4"})
+							fakeInstance = brokerstore.ServiceInstance{
+								ServiceID:        instanceID,
+								PlanID:           "fake-plan-id",
+								OrganizationGUID: "fake-org-guid",
+								SpaceGUID:        "fake-space-guid",
+								ServiceFingerPrint: efsbroker.EFSInstance{
+									EfsId:         fsID,
+									FsState:       "available",
+									MountId:       mountID,
+									MountState:    "available",
+									MountIp:       "1.2.3.4",
+									MountPermsSet: true,
+								},
+							}
+							fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 						})
 
 						It("returns success", func() {
@@ -328,6 +394,10 @@ var _ = Describe("Broker", func() {
 			})
 
 			Context("when the instance doesn't exist", func() {
+				BeforeEach(func() {
+					fakeStore.RetrieveInstanceDetailsReturns(brokerstore.ServiceInstance{}, errors.New("not found"))
+				})
+
 				It("errors", func() {
 					op, err = broker.LastOperation(ctx, "non-existant", "provision")
 					Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
@@ -337,22 +407,26 @@ var _ = Describe("Broker", func() {
 
 		Context(".Bind", func() {
 			var (
-				opState     efsbroker.OperationState
-				bindDetails brokerapi.BindDetails
+				bindDetails  brokerapi.BindDetails
+				fakeInstance brokerstore.ServiceInstance
 			)
 
 			BeforeEach(func() {
-				opState = efsbroker.OperationState{
-					InstanceID:       instanceID,
-					FsID:             "foo",
-					FsState:          efs.LifeCycleStateAvailable,
-					MountTargetID:    "bar",
-					MountTargetState: efs.LifeCycleStateAvailable,
-					MountPermsSet:    true,
-					MountTargetIp:    nfsServerIP,
+				fakeInstance = brokerstore.ServiceInstance{
+					ServiceID:        instanceID,
+					PlanID:           "fake-plan-id",
+					OrganizationGUID: "fake-org-guid",
+					SpaceGUID:        "fake-space-guid",
+					ServiceFingerPrint: efsbroker.EFSInstance{
+						EfsId:         "foo",
+						FsState:       efs.LifeCycleStateAvailable,
+						MountId:       "bar",
+						MountState:    efs.LifeCycleStateAvailable,
+						MountIp:       nfsServerIP,
+						MountPermsSet: true,
+					},
 				}
-
-				broker.ProvisionEvent(&opState)
+				fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 
 				bindDetails = brokerapi.BindDetails{AppGUID: "guid"}
 			})
@@ -405,14 +479,6 @@ var _ = Describe("Broker", func() {
 				Expect(binding.VolumeMounts[0].Device.MountConfig["source"]).To(Equal(nfsServerIP + efsbroker.RootPath))
 			})
 
-			It("should write state", func() {
-				_, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
-				Expect(err).NotTo(HaveOccurred())
-
-				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.1.1.1","Err":null}},"BindingMap":{"binding-id":{"app_guid":"guid","plan_id":"","service_id":""}}}`))
-			})
-
 			It("errors if mode is not a boolean", func() {
 				var err error
 				params := map[string]interface{}{"readonly": "true"}
@@ -437,23 +503,21 @@ var _ = Describe("Broker", func() {
 			})
 
 			Context("when the binding already exists", func() {
-				BeforeEach(func() {
-					_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
-					Expect(err).NotTo(HaveOccurred())
-				})
-
 				It("doesn't error when binding the same details", func() {
+					fakeStore.IsBindingConflictReturns(false)
 					_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 					Expect(err).NotTo(HaveOccurred())
 				})
 
 				It("errors when binding different details", func() {
+					fakeStore.IsBindingConflictReturns(true)
 					_, err := broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "different"})
 					Expect(err).To(Equal(brokerapi.ErrBindingAlreadyExists))
 				})
 			})
 
 			It("errors when the service instance does not exist", func() {
+				fakeStore.RetrieveInstanceDetailsReturns(brokerstore.ServiceInstance{}, errors.New("not found"))
 				_, err := broker.Bind(ctx, "nonexistent-instance-id", bindingID, brokerapi.BindDetails{AppGUID: "guid"})
 				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 			})
@@ -466,28 +530,28 @@ var _ = Describe("Broker", func() {
 
 		Context(".Unbind", func() {
 			var (
-				instanceID string
-				opState    efsbroker.OperationState
-				err        error
+				instanceID   string
+				fakeInstance brokerstore.ServiceInstance
 			)
 
 			BeforeEach(func() {
 				instanceID = "some-instance-id"
-
-				opState = efsbroker.OperationState{
-					InstanceID:       instanceID,
-					FsID:             "foo",
-					FsState:          efs.LifeCycleStateAvailable,
-					MountTargetID:    "bar",
-					MountTargetState: efs.LifeCycleStateAvailable,
-					MountPermsSet:    true,
-					MountTargetIp:    "1.2.3.4",
+				fakeInstance = brokerstore.ServiceInstance{
+					ServiceID:        instanceID,
+					PlanID:           "fake-plan-id",
+					OrganizationGUID: "fake-org-guid",
+					SpaceGUID:        "fake-space-guid",
+					ServiceFingerPrint: efsbroker.EFSInstance{
+						EfsId:         "foo",
+						FsState:       efs.LifeCycleStateAvailable,
+						MountId:       "bar",
+						MountState:    efs.LifeCycleStateAvailable,
+						MountIp:       "1.2.3.4",
+						MountPermsSet: true,
+					},
 				}
+				fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 
-				broker.ProvisionEvent(&opState)
-
-				_, err = broker.Bind(ctx, instanceID, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
-				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("unbinds a bound service instance from an app", func() {
@@ -496,20 +560,21 @@ var _ = Describe("Broker", func() {
 			})
 
 			It("fails when trying to unbind a instance that has not been provisioned", func() {
+				fakeStore.RetrieveInstanceDetailsReturns(brokerstore.ServiceInstance{}, errors.New("not found"))
 				err := broker.Unbind(ctx, "some-other-instance-id", bindingID, brokerapi.UnbindDetails{})
 				Expect(err).To(Equal(brokerapi.ErrInstanceDoesNotExist))
 			})
 
 			It("fails when trying to unbind a binding that has not been bound", func() {
+				fakeStore.RetrieveBindingDetailsReturns(brokerapi.BindDetails{}, errors.New("not found"))
 				err := broker.Unbind(ctx, instanceID, "some-other-binding-id", brokerapi.UnbindDetails{})
 				Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
 			})
-			It("should write state", func() {
+
+			It("should delete binding in store", func() {
 				err := broker.Unbind(ctx, instanceID, bindingID, brokerapi.UnbindDetails{})
 				Expect(err).NotTo(HaveOccurred())
-
-				_, data, _ := fakeIoutil.WriteFileArgsForCall(fakeIoutil.WriteFileCallCount() - 1)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"some-instance-id":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+				Expect(fakeStore.DeleteBindingDetailsCallCount()).To(Equal(1))
 			})
 		})
 
@@ -533,10 +598,9 @@ var _ = Describe("Broker", func() {
 				broker.ProvisionEvent(&opState)
 			})
 
-			It("should write state to disk", func() {
-				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(1))
-				_, data, _ := fakeIoutil.WriteFileArgsForCall(0)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+			It("should update state", func() {
+				Expect(fakeStore.DeleteInstanceDetailsCallCount()).To(Equal(1))
+				Expect(fakeStore.CreateInstanceDetailsCallCount()).To(Equal(1))
 			})
 		})
 
@@ -555,93 +619,48 @@ var _ = Describe("Broker", func() {
 					MountPermsSet:    true,
 					MountTargetIp:    "1.2.3.4",
 				}
-				broker.ProvisionEvent(&opState)
-				opState.InstanceID = "instance2"
-				broker.ProvisionEvent(&opState)
-				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(2))
 			})
 
 			JustBeforeEach(func() {
 				broker.DeprovisionEvent(&opState)
 			})
 
-			It("should write state to disk", func() {
-				Expect(fakeIoutil.WriteFileCallCount()).To(Equal(3))
-				_, data, _ := fakeIoutil.WriteFileArgsForCall(0)
-				Expect(string(data)).To(Equal(`{"InstanceMap":{"instance1":{"service_id":"","plan_id":"","organization_guid":"","space_guid":"","EfsId":"foo","FsState":"available","MountId":"bar","MountState":"available","MountPermsSet":true,"MountIp":"1.2.3.4","Err":null}},"BindingMap":{}}`))
+			It("should delete instance state", func() {
+				Expect(fakeStore.DeleteInstanceDetailsCallCount()).To(Equal(1))
 			})
 
-		})
-
-		Context("when multiple operations happen in parallel", func() {
-			It("maintains consistency", func() {
-				var wg sync.WaitGroup
-
-				wg.Add(5)
-
-				smash := func(uniqueName string) {
-					defer GinkgoRecover()
-					defer wg.Done()
-
-					broker.Services(ctx)
-
-					opState := efsbroker.OperationState{
-						InstanceID:       uniqueName,
-						FsID:             "foo",
-						FsState:          efs.LifeCycleStateAvailable,
-						MountTargetID:    "bar",
-						MountTargetState: efs.LifeCycleStateAvailable,
-						MountTargetIp:    "1.2.3.4",
-					}
-
-					broker.ProvisionEvent(&opState)
-
-					_, err := broker.Bind(ctx, uniqueName, bindingID, brokerapi.BindDetails{AppGUID: "guid"})
-					Expect(err).NotTo(HaveOccurred())
-
-					err = broker.Unbind(ctx, uniqueName, "some-other-binding-id", brokerapi.UnbindDetails{})
-					Expect(err).To(Equal(brokerapi.ErrBindingDoesNotExist))
-
-					broker.DeprovisionEvent(&opState)
-				}
-
-				// Note go race detection should kick in if access is unsynchronized
-				go smash("some-instance-1")
-				go smash("some-instance-2")
-				go smash("some-instance-3")
-				go smash("some-instance-4")
-				go smash("some-instance-5")
-
-				wg.Wait()
-			})
 		})
 	})
 
 	Context("when recreating", func() {
+		var (
+			fakeInstance brokerstore.ServiceInstance
+			err          error
+		)
 		It("should be able to bind to previously created service", func() {
-			fileContents, err := json.Marshal(dynamicState{
-				InstanceMap: map[string]efsbroker.EFSInstance{
-					serviceName: {
-						EfsId:         serviceID,
-						FsState:       efs.LifeCycleStateAvailable,
-						MountId:       "foo",
-						MountState:    efs.LifeCycleStateAvailable,
-						MountPermsSet: true,
-						MountIp:       "0.0.0.0",
-						Err:           nil,
-					},
+			fakeInstance = brokerstore.ServiceInstance{
+				ServiceID:        instanceID,
+				PlanID:           "fake-plan-id",
+				OrganizationGUID: "fake-org-guid",
+				SpaceGUID:        "fake-space-guid",
+				ServiceFingerPrint: efsbroker.EFSInstance{
+					EfsId:         serviceID,
+					FsState:       efs.LifeCycleStateAvailable,
+					MountId:       "foo",
+					MountState:    efs.LifeCycleStateAvailable,
+					MountIp:       "0.0.0.0",
+					MountPermsSet: true,
+					Err:           nil,
 				},
-				BindingMap: map[string]brokerapi.BindDetails{},
-			})
-			Expect(err).NotTo(HaveOccurred())
-			fakeIoutil.ReadFileReturns(fileContents, nil)
+			}
+			fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
 
 			broker = efsbroker.New(
 				logger,
 				serviceName, serviceID, fakeTargetPath,
 				fakeOs,
-				fakeIoutil,
 				fakeClock,
+				fakeStore,
 				fakeEFSService,
 				[]string{"fake-subnet-id"},
 				"fake-security-group",
@@ -659,15 +678,12 @@ var _ = Describe("Broker", func() {
 		})
 
 		It("shouldn't be able to bind to service from invalid state file", func() {
-			filecontents := "{serviceName: [some invalid state]}"
-			fakeIoutil.ReadFileReturns([]byte(filecontents[:]), nil)
-
 			broker = efsbroker.New(
 				logger,
 				serviceName, serviceID, fakeTargetPath,
 				fakeOs,
-				fakeIoutil,
 				fakeClock,
+				fakeStore,
 				fakeEFSService,
 				[]string{"fake-subnet-id"},
 				"fake-security-group",

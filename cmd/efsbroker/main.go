@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"code.cloudfoundry.org/cflager"
@@ -12,9 +15,9 @@ import (
 	"code.cloudfoundry.org/efsbroker/efsbroker"
 	"code.cloudfoundry.org/efsbroker/utils"
 	"code.cloudfoundry.org/efsdriver/efsvoltools/voltoolshttp"
-	"code.cloudfoundry.org/goshims/ioutilshim"
 	"code.cloudfoundry.org/goshims/osshim"
 	"code.cloudfoundry.org/lager"
+	"code.cloudfoundry.org/service-broker-store/brokerstore"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -51,6 +54,42 @@ var serviceId = flag.String(
 	"service-guid",
 	"ID of the service to register with cloud controller",
 )
+
+var dbDriver = flag.String(
+	"dbDriver",
+	"",
+	"(optional) database driver name when using SQL to store broker state",
+)
+
+var dbHostname = flag.String(
+	"dbHostname",
+	"",
+	"(optional) database hostname when using SQL to store broker state",
+)
+var dbPort = flag.String(
+	"dbPort",
+	"",
+	"(optional) database port when using SQL to store broker state",
+)
+
+var dbName = flag.String(
+	"dbName",
+	"",
+	"(optional) database name when using SQL to store broker state",
+)
+
+var dbCACert = flag.String(
+	"dbCACert",
+	"",
+	"(optional) CA Cert to verify SSL connection",
+)
+
+var cfServiceName = flag.String(
+	"cfServiceName",
+	"",
+	"(optional) For CF pushed apps, the service name in VCAP_SERVICES where we should find database credentials.  dbDriver must be defined if this option is set, but all other db parameters will be extracted from the service binding.",
+)
+
 var username = flag.String(
 	"username",
 	"admin",
@@ -72,8 +111,14 @@ var awsSecurityGroup = flag.String(
 	"aws security group to assign to the mount point",
 )
 
+var (
+	dbUsername string
+	dbPassword string
+)
+
 func main() {
 	parseCommandLine()
+	parseEnvironment()
 
 	checkParams()
 
@@ -101,9 +146,14 @@ func parseCommandLine() {
 	flag.Parse()
 }
 
+func parseEnvironment() {
+	dbUsername, _ = os.LookupEnv("DB_USERNAME")
+	dbPassword, _ = os.LookupEnv("DB_PASSWORD")
+}
+
 func checkParams() {
-	if *dataDir == "" {
-		fmt.Fprint(os.Stderr, "\nERROR: Required parameter dataDir not defined.\n\n")
+	if *dataDir == "" && *dbDriver == "" {
+		fmt.Fprint(os.Stderr, "\nERROR: Either dataDir or db parameters must be provided.\n\n")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -113,6 +163,42 @@ func checkParams() {
 		flag.Usage()
 		os.Exit(1)
 	}
+}
+
+func parseVcapServices(logger lager.Logger, os osshim.Os) {
+	if *dbDriver == "" {
+		logger.Fatal("missing-db-driver-parameter", errors.New("dbDriver parameter is required for cf deployed broker"))
+	}
+
+	// populate db parameters from VCAP_SERVICES and pitch a fit if there isn't one.
+	services, hasValue := os.LookupEnv("VCAP_SERVICES")
+	if !hasValue {
+		logger.Fatal("missing-vcap-services-environment", errors.New("missing VCAP_SERVICES environment"))
+	}
+
+	stuff := map[string][]interface{}{}
+	err := json.Unmarshal([]byte(services), &stuff)
+	if err != nil {
+		logger.Fatal("json-unmarshal-error", err)
+	}
+
+	stuff2, ok := stuff[*cfServiceName]
+	if !ok {
+		logger.Fatal("missing-service-binding", errors.New("VCAP_SERVICES missing specified db service"), lager.Data{"stuff": stuff})
+	}
+
+	stuff3 := stuff2[0].(map[string]interface{})
+
+	credentials := stuff3["credentials"].(map[string]interface{})
+	logger.Debug("credentials-parsed", lager.Data{"credentials": credentials})
+
+	dbUsername = credentials["username"].(string)
+	dbPassword = credentials["password"].(string)
+	*dbHostname = credentials["hostname"].(string)
+	if *dbPort, ok = credentials["port"].(string); !ok {
+		*dbPort = fmt.Sprintf("%.0f", credentials["port"].(float64))
+	}
+	*dbName = credentials["name"].(string)
 }
 
 func parseSubnets(subnetsFlag string) []string {
@@ -125,6 +211,14 @@ func createServer(logger lager.Logger) ifrit.Runner {
 		panic(err)
 	}
 
+	fileName := filepath.Join(*dataDir, fmt.Sprintf("%s-services.json", *serviceName))
+
+	if *cfServiceName != "" {
+		parseVcapServices(logger, &osshim.OsShim{})
+	}
+
+	store := brokerstore.NewStore(logger, *dbDriver, dbUsername, dbPassword, *dbHostname, *dbPort, *dbName, *dbCACert, fileName)
+
 	config := aws.NewConfig()
 
 	efsClient := efs.New(session, config)
@@ -136,7 +230,7 @@ func createServer(logger lager.Logger) ifrit.Runner {
 
 	serviceBroker := efsbroker.New(logger,
 		*serviceName, *serviceId,
-		*dataDir, &osshim.OsShim{}, &ioutilshim.IoutilShim{}, clock.NewClock(),
+		*dataDir, &osshim.OsShim{}, clock.NewClock(), store,
 		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup, efsTools, efsbroker.NewProvisionOperation, efsbroker.NewDeprovisionOperation)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}

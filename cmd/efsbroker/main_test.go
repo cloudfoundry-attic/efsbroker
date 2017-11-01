@@ -204,13 +204,34 @@ var _ = Describe("Efsbroker Main", func() {
 		})
 	})
 
+	Context("Missing required args", func() {
+		It("fails with an error", func() {
+			var args []string
+			args = append(args, "-listenAddr", "0.0.0.0:" + strconv.Itoa(8999+GinkgoParallelNode()))
+			args = append(args, "-username", "admin")
+			args = append(args, "-password", "password")
+			args = append(args, "-dataDir", os.TempDir())
+			args = append(args, "-awsSubnetIds", "subnet-ajwe8912,subnet-olj23e")
+			args = append(args, "-awsAZs", "foo-foo-2a,foo-foo-2b,BAD-EXTRA-AZ")
+			args = append(args, "-awsSecurityGroups", "sg-foo,sg-bar")
+
+			volmanRunner := failRunner{
+				Name:       "efsbroker",
+				Command:    exec.Command(binaryPath, args...),
+				StartCheck: "arguments awsSubnetIds, awsAZs, and awsSecurityGroups must have the same number of entries",
+			}
+			process := ifrit.Invoke(volmanRunner)
+			ginkgomon.Kill(process) // this is only if incorrect implementation leaves process running
+		})
+	})
+
 	Context("Has required args", func() {
 		var (
-			args               []string
-			listenAddr         string
-			tempDir            string
-			username, password string
-			awsSubnetIds       string
+			args                                    []string
+			listenAddr                              string
+			tempDir                                 string
+			username, password                      string
+			awsSubnetIds, awsAZs, awsSecurityGroups string
 
 			process ifrit.Process
 		)
@@ -221,12 +242,16 @@ var _ = Describe("Efsbroker Main", func() {
 			password = "password"
 			tempDir = os.TempDir()
 			awsSubnetIds = "subnet-ajwe8912,subnet-olj23e"
+			awsAZs = "foo-foo-2a,foo-foo-2b"
+			awsSecurityGroups = "sg-foo,sg-bar"
 
 			args = append(args, "-listenAddr", listenAddr)
 			args = append(args, "-username", username)
 			args = append(args, "-password", password)
 			args = append(args, "-dataDir", tempDir)
 			args = append(args, "-awsSubnetIds", awsSubnetIds)
+			args = append(args, "-awsAZs", awsAZs)
+			args = append(args, "-awsSecurityGroups", awsSecurityGroups)
 
 		})
 

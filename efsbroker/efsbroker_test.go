@@ -99,10 +99,9 @@ var _ = Describe("Broker", func() {
 				fakeClock,
 				fakeStore,
 				fakeEFSService,
-				[]string{"fake-subnet-id"},
-				"fake-security-group",
+				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
 				fakeVolTools,
-				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []string, string, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
+				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []efsbroker.Subnet, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
 					return fakeProvisionOperation
 				},
 				func(lager.Logger, efsbroker.EFSService, efsbroker.Clock, efsbroker.DeprovisionOperationSpec, func(*efsbroker.OperationState)) efsbroker.Operation {
@@ -662,10 +661,9 @@ var _ = Describe("Broker", func() {
 				fakeClock,
 				fakeStore,
 				fakeEFSService,
-				[]string{"fake-subnet-id"},
-				"fake-security-group",
+				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
 				fakeVolTools,
-				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []string, string, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
+				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []efsbroker.Subnet, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
 					return fakeProvisionOperation
 				},
 				func(lager.Logger, efsbroker.EFSService, efsbroker.Clock, efsbroker.DeprovisionOperationSpec, func(*efsbroker.OperationState)) efsbroker.Operation {
@@ -685,10 +683,9 @@ var _ = Describe("Broker", func() {
 				fakeClock,
 				fakeStore,
 				fakeEFSService,
-				[]string{"fake-subnet-id"},
-				"fake-security-group",
+				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
 				fakeVolTools,
-				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []string, string, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
+				func(lager.Logger, string, string, efsbroker.EFSService, efsvoltools.VolTools, []efsbroker.Subnet, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
 					return fakeProvisionOperation
 				},
 				func(lager.Logger, efsbroker.EFSService, efsbroker.Clock, efsbroker.DeprovisionOperationSpec, func(*efsbroker.OperationState)) efsbroker.Operation {

@@ -59,17 +59,22 @@ type lock interface {
 	Unlock()
 }
 
+type Subnet struct {
+	ID            string
+	AZ            string
+	SecurityGroup string
+}
+
 type Broker struct {
 	logger               lager.Logger
 	efsService           EFSService
-	subnetIds            []string
-	securityGroup        string
+	subnets              []Subnet
 	dataDir              string
 	os                   osshim.Os
 	mutex                lock
 	clock                clock.Clock
 	efsTools             efsvoltools.VolTools
-	ProvisionOperation   func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation
+	ProvisionOperation   func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation
 	DeprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation
 
 	static staticState
@@ -82,9 +87,9 @@ func New(
 	os osshim.Os,
 	clock clock.Clock,
 	store brokerstore.Store,
-	efsService EFSService, subnetIds []string, securityGroup string,
+	efsService EFSService, subnets []Subnet,
 	efsTools efsvoltools.VolTools,
-	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation,
+	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation,
 	deprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation,
 ) *Broker {
 
@@ -93,8 +98,7 @@ func New(
 		dataDir:              dataDir,
 		os:                   os,
 		efsService:           efsService,
-		subnetIds:            subnetIds,
-		securityGroup:        securityGroup,
+		subnets:              subnets,
 		mutex:                &sync.Mutex{},
 		clock:                clock,
 		store:                store,
@@ -177,7 +181,7 @@ func (b *Broker) Provision(context context.Context, instanceID string, details b
 		return brokerapi.ProvisionedServiceSpec{}, fmt.Errorf("failed to store instance details %s", instanceID)
 	}
 
-	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnetIds, b.securityGroup, b.clock, b.ProvisionEvent)
+	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnets, b.clock, b.ProvisionEvent)
 
 	go operation.Execute()
 

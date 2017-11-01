@@ -91,7 +91,15 @@ var _ = Describe("Operation", func() {
 				WriteFileWrote = string(data)
 				return nil
 			}
-			provisionOp = efsbroker.NewProvisionStateMachine(logger, "instanceID", "planId", fakeEFSService, fakeVolTools, []string{"subnet-id-1", "subnet-id-2"}, "security-group-id", fakeClock, update)
+			provisionOp = efsbroker.NewProvisionStateMachine(
+				logger,
+				"instanceID",
+				"planId",
+				fakeEFSService,
+				fakeVolTools,
+				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+				fakeClock,
+				update)
 			filesystemID = aws.String("fake-fs-id")
 		})
 

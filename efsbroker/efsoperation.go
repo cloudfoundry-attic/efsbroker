@@ -44,17 +44,16 @@ type OperationState struct {
 	Err              error
 }
 
-func NewProvisionOperation(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) Operation {
-	return NewProvisionStateMachine(logger, instanceID, planID, efsService, efsTools, subnetIds, securityGroup, clock, updateCb)
+func NewProvisionOperation(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation {
+	return NewProvisionStateMachine(logger, instanceID, planID, efsService, efsTools, subnets, clock, updateCb)
 }
 
-func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnetIds []string, securityGroup string, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
+func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
 	return &ProvisionOperationStateMachine{
 		planID,
 		efsService,
 		efsTools,
-		subnetIds,
-		securityGroup,
+		subnets,
 		logger,
 		clock,
 		&OperationState{InstanceID: instanceID},
@@ -68,8 +67,7 @@ type ProvisionOperationStateMachine struct {
 	planID          string
 	efsService      EFSService
 	efsTools        efsvoltools.VolTools
-	subnetIds       []string
-	securityGroup   string
+	subnets         []Subnet
 	logger          lager.Logger
 	clock           Clock
 	state           *OperationState
@@ -181,8 +179,8 @@ func (o *ProvisionOperationStateMachine) CreateMountTarget() error {
 
 	_, o.state.Err = o.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
 		FileSystemId:   aws.String(o.state.FsID),
-		SubnetId:       aws.String(o.subnetIds[0]),
-		SecurityGroups: []*string{aws.String(o.securityGroup)},
+		SubnetId:       aws.String(o.subnets[0].ID),
+		SecurityGroups: []*string{aws.String(o.subnets[0].SecurityGroup)},
 	})
 
 	if o.state.Err != nil {

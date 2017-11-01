@@ -105,10 +105,15 @@ var awsSubnetIds = flag.String(
 	"",
 	"list of comma-seperated aws subnet ids where mount targets will be created for each efs",
 )
-var awsSecurityGroup = flag.String(
-	"awsSecurityGroup",
+var awsAZs = flag.String(
+	"awsAZs",
 	"",
-	"aws security group to assign to the mount point",
+	"list of comma-seperated aws AZs (one per subnet id)",
+)
+var awsSecurityGroups = flag.String(
+	"awsSecurityGroups",
+	"",
+	"list of comma separated aws security groups to assign to the mount points (one per subnet id)",
 )
 
 var (
@@ -201,8 +206,19 @@ func parseVcapServices(logger lager.Logger, os osshim.Os) {
 	*dbName = credentials["name"].(string)
 }
 
-func parseSubnets(subnetsFlag string) []string {
-	return strings.Split(subnetsFlag, ",")
+func parseSubnets() []efsbroker.Subnet {
+	subnetIDs := strings.Split(*awsSubnetIds, ",")
+	AZs := strings.Split(*awsAZs, ",")
+	securityGroups := strings.Split(*awsSecurityGroups, ",")
+	if len(subnetIDs) != len(AZs) || len(AZs) != len(securityGroups) {
+		panic("arguments awsSubnetIds, awsAZs, and awsSecurityGroups must have the same number of entries")
+	}
+
+	ret := []efsbroker.Subnet{}
+	for i,s := range subnetIDs {
+		ret = append(ret, efsbroker.Subnet{s, AZs[i], securityGroups[i]})
+	}
+	return ret
 }
 
 func createServer(logger lager.Logger) ifrit.Runner {
@@ -228,10 +244,12 @@ func createServer(logger lager.Logger) ifrit.Runner {
 		panic(err)
 	}
 
+	subnets := parseSubnets()
+
 	serviceBroker := efsbroker.New(logger,
 		*serviceName, *serviceId,
 		*dataDir, &osshim.OsShim{}, clock.NewClock(), store,
-		efsClient, parseSubnets(*awsSubnetIds), *awsSecurityGroup, efsTools, efsbroker.NewProvisionOperation, efsbroker.NewDeprovisionOperation)
+		efsClient, subnets, efsTools, efsbroker.NewProvisionOperation, efsbroker.NewDeprovisionOperation)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

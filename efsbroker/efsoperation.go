@@ -44,16 +44,17 @@ type OperationState struct {
 	Err              error
 }
 
-func NewProvisionOperation(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation {
-	return NewProvisionStateMachine(logger, instanceID, planID, efsService, efsTools, subnets, clock, updateCb)
+func NewProvisionOperation(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, encryption Encryption, clock Clock, updateCb func(*OperationState)) Operation {
+	return NewProvisionStateMachine(logger, instanceID, planID, efsService, efsTools, subnets, encryption, clock, updateCb)
 }
 
-func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
+func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, encryption Encryption, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
 	return &ProvisionOperationStateMachine{
 		planID,
 		efsService,
 		efsTools,
 		subnets,
+		encryption,
 		logger,
 		clock,
 		&OperationState{InstanceID: instanceID},
@@ -68,6 +69,7 @@ type ProvisionOperationStateMachine struct {
 	efsService      EFSService
 	efsTools        efsvoltools.VolTools
 	subnets         []Subnet
+	encryption      Encryption
 	logger          lager.Logger
 	clock           Clock
 	state           *OperationState
@@ -114,13 +116,19 @@ func (o *ProvisionOperationStateMachine) CreateFs() error {
 	defer o.updateCb(o.state)
 
 	var fsDescriptor *efs.FileSystemDescription
-	fsDescriptor, o.state.Err = o.efsService.CreateFileSystem(&efs.CreateFileSystemInput{
+	input := efs.CreateFileSystemInput{
 		CreationToken:   aws.String(o.state.InstanceID),
 		PerformanceMode: planIDToPerformanceMode(o.planID),
-	})
+		Encrypted:       &o.encryption.Enabled,
+	}
+
+	if o.encryption.KmsKeyId != "" {
+		input.KmsKeyId = &o.encryption.KmsKeyId
+	}
+
+	fsDescriptor, o.state.Err = o.efsService.CreateFileSystem(&input)
 	if o.state.Err != nil {
 		logger.Error("provision-state-start-failed-to-create-fs", o.state.Err)
-		o.state.Err = o.state.Err
 		return o.state.Err
 	}
 	o.state.FsID = *fsDescriptor.FileSystemId

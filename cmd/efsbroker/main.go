@@ -115,6 +115,16 @@ var awsSecurityGroups = flag.String(
 	"",
 	"list of comma separated aws security groups to assign to the mount points (one per subnet id)",
 )
+var enableEncryption = flag.Bool(
+	"enableEncryption",
+	false,
+	"a boolean value that, if true, creates an encrypted file system",
+)
+var awsKmsKeyId = flag.String(
+	"awsKmsKeyId",
+	"",
+	"The id of the AWS KMS CMK that will be used to protect the encrypted file system",
+)
 
 var (
 	dbUsername string
@@ -215,7 +225,7 @@ func parseSubnets() []efsbroker.Subnet {
 	}
 
 	ret := []efsbroker.Subnet{}
-	for i,s := range subnetIDs {
+	for i, s := range subnetIDs {
 		ret = append(ret, efsbroker.Subnet{s, AZs[i], securityGroups[i]})
 	}
 	return ret
@@ -245,11 +255,12 @@ func createServer(logger lager.Logger) ifrit.Runner {
 	}
 
 	subnets := parseSubnets()
+	encryption := efsbroker.Encryption{*enableEncryption, *awsKmsKeyId}
 
 	serviceBroker := efsbroker.New(logger,
 		*serviceName, *serviceId,
 		*dataDir, &osshim.OsShim{}, clock.NewClock(), store,
-		efsClient, subnets, efsTools, efsbroker.NewProvisionOperation, efsbroker.NewDeprovisionOperation)
+		efsClient, subnets, encryption, efsTools, efsbroker.NewProvisionOperation, efsbroker.NewDeprovisionOperation)
 
 	credentials := brokerapi.BrokerCredentials{Username: *username, Password: *password}
 	handler := brokerapi.New(serviceBroker, logger.Session("broker-api"), credentials)

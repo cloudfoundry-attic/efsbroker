@@ -1,15 +1,12 @@
 package efsbroker
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"sync"
-
 	"path"
-
-	"context"
+	"sync"
 
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
@@ -65,16 +62,22 @@ type Subnet struct {
 	SecurityGroup string
 }
 
+type Encryption struct {
+	Enabled  bool
+	KmsKeyId string
+}
+
 type Broker struct {
 	logger               lager.Logger
 	efsService           EFSService
 	subnets              []Subnet
+	encryption           Encryption
 	dataDir              string
 	os                   osshim.Os
 	mutex                lock
 	clock                clock.Clock
 	efsTools             efsvoltools.VolTools
-	ProvisionOperation   func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation
+	ProvisionOperation   func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, encryption Encryption, clock Clock, updateCb func(*OperationState)) Operation
 	DeprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation
 
 	static staticState
@@ -87,9 +90,9 @@ func New(
 	os osshim.Os,
 	clock clock.Clock,
 	store brokerstore.Store,
-	efsService EFSService, subnets []Subnet,
+	efsService EFSService, subnets []Subnet, encryption Encryption,
 	efsTools efsvoltools.VolTools,
-	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation,
+	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, encryption Encryption, clock Clock, updateCb func(*OperationState)) Operation,
 	deprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation,
 ) *Broker {
 
@@ -99,6 +102,7 @@ func New(
 		os:                   os,
 		efsService:           efsService,
 		subnets:              subnets,
+		encryption:           encryption,
 		mutex:                &sync.Mutex{},
 		clock:                clock,
 		store:                store,
@@ -181,7 +185,7 @@ func (b *Broker) Provision(context context.Context, instanceID string, details b
 		return brokerapi.ProvisionedServiceSpec{}, fmt.Errorf("failed to store instance details %s", instanceID)
 	}
 
-	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnets, b.clock, b.ProvisionEvent)
+	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnets, b.encryption, b.clock, b.ProvisionEvent)
 
 	go operation.Execute()
 

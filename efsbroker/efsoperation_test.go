@@ -98,6 +98,7 @@ var _ = Describe("Operation", func() {
 				fakeEFSService,
 				fakeVolTools,
 				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+				efsbroker.Encryption{false, ""},
 				fakeClock,
 				update)
 			filesystemID = aws.String("fake-fs-id")
@@ -127,6 +128,62 @@ var _ = Describe("Operation", func() {
 					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).To(Equal(SomeErr))
 				})
+			})
+
+			Context(".CreateFsWithDefaultEncryption", func() {
+				BeforeEach(func() {
+					fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
+						FileSystemId: filesystemID,
+					}, nil)
+					provisionOp = efsbroker.NewProvisionStateMachine(
+						logger,
+						"instanceID",
+						"planId",
+						fakeEFSService,
+						fakeVolTools,
+						[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+						efsbroker.Encryption{true, ""},
+						fakeClock,
+						update)
+				})
+
+				It("enables encryption on the filesystem", func() {
+					Expect(fakeEFSService.CreateFileSystemCallCount()).To(Equal(1))
+					input := fakeEFSService.CreateFileSystemArgsForCall(0)
+					Expect(input.Encrypted).ToNot(BeNil())
+					Expect(*input.Encrypted).To(BeTrue())
+				})
+
+			})
+
+			Context(".CreateFsWithCustomKmsKey", func() {
+				var (
+					kmsKeyId = "fakeKmsKeyId"
+				)
+
+				BeforeEach(func() {
+					fakeEFSService.CreateFileSystemReturns(&efs.FileSystemDescription{
+						FileSystemId: filesystemID,
+					}, nil)
+					provisionOp = efsbroker.NewProvisionStateMachine(
+						logger,
+						"instanceID",
+						"planId",
+						fakeEFSService,
+						fakeVolTools,
+						[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+						efsbroker.Encryption{true, kmsKeyId},
+						fakeClock,
+						update)
+				})
+
+				It("enables encryption on the filesystem", func() {
+					Expect(fakeEFSService.CreateFileSystemCallCount()).To(Equal(1))
+					input := fakeEFSService.CreateFileSystemArgsForCall(0)
+					Expect(input.KmsKeyId).ToNot(BeNil())
+					Expect(*input.KmsKeyId).To(Equal(kmsKeyId))
+				})
+
 			})
 		})
 

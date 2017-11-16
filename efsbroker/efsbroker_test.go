@@ -55,6 +55,7 @@ var _ = Describe("Broker", func() {
 		serviceName    = "service-name"
 		serviceID      = "service-id"
 		nfsServerIP    = "1.1.1.1"
+		nfsServerAZ    = "something-something-1"
 		fakeTargetPath = "/fake-dir"
 	)
 
@@ -406,12 +407,29 @@ var _ = Describe("Broker", func() {
 
 		Context(".Bind", func() {
 			var (
-				bindDetails  brokerapi.BindDetails
-				fakeInstance brokerstore.ServiceInstance
+				bindDetails        brokerapi.BindDetails
+				fakeInstance       brokerstore.ServiceInstance
+				fakeLegacyInstance brokerstore.ServiceInstance
 			)
 
 			BeforeEach(func() {
 				fakeInstance = brokerstore.ServiceInstance{
+					ServiceID:        instanceID,
+					PlanID:           "fake-plan-id",
+					OrganizationGUID: "fake-org-guid",
+					SpaceGUID:        "fake-space-guid",
+					ServiceFingerPrint: efsbroker.EFSInstance{
+						EfsId:         "foo",
+						FsState:       efs.LifeCycleStateAvailable,
+						MountId:       "bar",
+						MountState:    efs.LifeCycleStateAvailable,
+						MountIp:       nfsServerIP,
+						MountIps:      []string{nfsServerIP},
+						MountAZs:      []string{nfsServerAZ},
+						MountPermsSet: true,
+					},
+				}
+				fakeLegacyInstance = brokerstore.ServiceInstance{
 					ServiceID:        instanceID,
 					PlanID:           "fake-plan-id",
 					OrganizationGUID: "fake-org-guid",
@@ -476,6 +494,22 @@ var _ = Describe("Broker", func() {
 
 				Expect(len(binding.VolumeMounts)).To(Equal(1))
 				Expect(binding.VolumeMounts[0].Device.MountConfig["source"]).To(Equal(nfsServerIP + efsbroker.RootPath))
+			})
+			It("should still send the ip in the Opts if the service instance is old", func() {
+				fakeStore.RetrieveInstanceDetailsReturns(fakeLegacyInstance, nil)
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(len(binding.VolumeMounts)).To(Equal(1))
+				Expect(binding.VolumeMounts[0].Device.MountConfig["source"]).To(Equal(nfsServerIP + efsbroker.RootPath))
+			})
+			It("should map the ip to the az in the Opts", func() {
+				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(len(binding.VolumeMounts)).To(Equal(1))
+				azMap := binding.VolumeMounts[0].Device.MountConfig["az-map"].(map[string]interface{})
+				Expect(azMap[nfsServerAZ]).To(Equal(nfsServerIP + efsbroker.RootPath))
 			})
 
 			It("errors if mode is not a boolean", func() {
@@ -584,12 +618,12 @@ var _ = Describe("Broker", func() {
 
 			BeforeEach(func() {
 				opState = efsbroker.OperationState{
-					FsID:             "foo",
-					FsState:          efs.LifeCycleStateAvailable,
-					MountTargetID:    "bar",
-					MountTargetState: efs.LifeCycleStateAvailable,
-					MountPermsSet:    true,
-					MountTargetIp:    "1.2.3.4",
+					FsID:              "foo",
+					FsState:           efs.LifeCycleStateAvailable,
+					MountTargetIDs:    []string{"bar"},
+					MountTargetStates: []string{efs.LifeCycleStateAvailable},
+					MountPermsSet:     true,
+					MountTargetIps:    []string{"1.2.3.4"},
 				}
 			})
 
@@ -610,13 +644,13 @@ var _ = Describe("Broker", func() {
 
 			BeforeEach(func() {
 				opState = efsbroker.OperationState{
-					InstanceID:       "instance1",
-					FsID:             "foo",
-					FsState:          efs.LifeCycleStateAvailable,
-					MountTargetID:    "bar",
-					MountTargetState: efs.LifeCycleStateAvailable,
-					MountPermsSet:    true,
-					MountTargetIp:    "1.2.3.4",
+					InstanceID:        "instance1",
+					FsID:              "foo",
+					FsState:           efs.LifeCycleStateAvailable,
+					MountTargetIDs:    []string{"bar"},
+					MountTargetStates: []string{efs.LifeCycleStateAvailable},
+					MountPermsSet:     true,
+					MountTargetIps:    []string{"1.2.3.4"},
 				}
 			})
 

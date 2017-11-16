@@ -232,7 +232,7 @@ var _ = Describe("Operation", func() {
 
 		Context(".CreateMountTarget", func() {
 			JustBeforeEach(func() {
-				err = provisionOp.CreateMountTarget()
+				err = provisionOp.CreateMountTargets()
 			})
 			Context("when amazon's create mount target return successfully", func() {
 				BeforeEach(func() {
@@ -241,9 +241,11 @@ var _ = Describe("Operation", func() {
 						LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
 					}, nil)
 				})
-				It("should succeed and set ststae", func() {
+				It("should succeed and set state", func() {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.Err).To(BeNil())
+					Expect(operationState.MountTargetIDs).To(ContainElement("fake-mt-id"))
+					Expect(operationState.MountTargetAZs).To(ContainElement("fake-az"))
 				})
 			})
 			Context("when amazon's create mount target returns an error", func() {
@@ -258,8 +260,15 @@ var _ = Describe("Operation", func() {
 		})
 
 		Context(".CheckMountTarget", func() {
+			BeforeEach(func() {
+				fakeEFSService.CreateMountTargetReturns(&efs.MountTargetDescription{
+					MountTargetId:  aws.String("fake-mt-id"),
+					LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+				}, nil)
+			})
 			JustBeforeEach(func() {
-				err = provisionOp.CheckMountTarget()
+				provisionOp.CreateMountTargets()
+				err = provisionOp.CheckMountTargets()
 			})
 			Context("when amazon's describe mount target return successfully", func() {
 				BeforeEach(func() {
@@ -274,9 +283,10 @@ var _ = Describe("Operation", func() {
 				It("should succeed and set op state", func() {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.Err).To(BeNil())
-					Expect(operationState.MountTargetID).To(Equal("fake-mt-id"))
-					Expect(operationState.MountTargetState).To(Equal("available"))
-					Expect(operationState.MountTargetIp).To(Equal("1.2.3.4"))
+					Expect(operationState.MountTargetIDs[0]).To(Equal("fake-mt-id"))
+					Expect(operationState.MountTargetStates[0]).To(Equal("available"))
+					Expect(operationState.MountTargetIps[0]).To(Equal("1.2.3.4"))
+					Expect(operationState.MountTargetAZs[0]).To(Equal("fake-az"))
 				})
 			})
 			Context("when amazon's describe mount target returns an error", func() {
@@ -339,7 +349,7 @@ var _ = Describe("Operation", func() {
 				})
 				It("should succeed", func() {
 					Expect(err).NotTo(HaveOccurred())
-					Expect(operationState.MountTargetState).To(Equal(efs.LifeCycleStateAvailable))
+					Expect(operationState.MountTargetStates[0]).To(Equal(efs.LifeCycleStateAvailable))
 					Expect(fakeEFSService.DescribeMountTargetsCallCount()).To(Equal(2))
 				})
 			})
@@ -356,6 +366,122 @@ var _ = Describe("Operation", func() {
 					Expect(err).To(HaveOccurred())
 					Expect(operationState.Err).NotTo(BeNil())
 				})
+			})
+			Context("when there are multiple subnets", func() {
+				BeforeEach(func() {
+					provisionOp = efsbroker.NewProvisionStateMachine(
+						logger,
+						"instanceID",
+						"planId",
+						fakeEFSService,
+						fakeVolTools,
+						[]efsbroker.Subnet{
+							{"fake-subnet-id", "fake-az", "fake-security-group"},
+							{"fake-subnet-id-2", "fake-az-2", "fake-security-group-2"},
+						},
+						fakeClock,
+						update)
+					filesystemID = aws.String("fake-fs-id")
+
+					count := 0
+					fakeEFSService.CreateMountTargetStub = func(*efs.CreateMountTargetInput) (*efs.MountTargetDescription, error) {
+						if count == 0 {
+							count++
+							return &efs.MountTargetDescription{
+									MountTargetId:  aws.String("fake-mt-id-1"),
+									LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+							}, nil
+						}
+						return &efs.MountTargetDescription{
+								MountTargetId:  aws.String("fake-mt-id-2"),
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+						}, nil
+					}
+
+				})
+				Context("when amazon's describe mount target returns one mount target", func() {
+					BeforeEach(func() {
+						fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+							MountTargets: []*efs.MountTargetDescription{{
+								MountTargetId:  aws.String("fake-mt-id-1"),
+								IpAddress:      aws.String("1.2.3.4"),
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}},
+						}, nil)
+					})
+					It("should error and set err on op state", func() {
+						Expect(err).To(HaveOccurred())
+						Expect(operationState.Err).NotTo(BeNil())
+					})
+				})
+				Context("when there are many mount targets, returned out of order", func() {
+					BeforeEach(func() {
+
+						fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+							MountTargets: []*efs.MountTargetDescription{{
+								MountTargetId:  aws.String("fake-mt-id-2"),
+								IpAddress:      aws.String("1.2.3.5"),
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}, {
+								MountTargetId:  aws.String("fake-mt-id-1"),
+								IpAddress:      aws.String("1.2.3.4"),
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}},
+						}, nil)
+					})
+					It("should succeed and set op state in original order with correct AZs", func() {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(operationState.Err).To(BeNil())
+						Expect(operationState.MountTargetIDs[0]).To(Equal("fake-mt-id-1"))
+						Expect(operationState.MountTargetStates[0]).To(Equal("available"))
+						Expect(operationState.MountTargetIps[0]).To(Equal("1.2.3.4"))
+						Expect(operationState.MountTargetAZs[0]).To(Equal("fake-az"))
+						Expect(operationState.MountTargetIDs[1]).To(Equal("fake-mt-id-2"))
+						Expect(operationState.MountTargetStates[1]).To(Equal("available"))
+						Expect(operationState.MountTargetIps[1]).To(Equal("1.2.3.5"))
+						Expect(operationState.MountTargetAZs[1]).To(Equal("fake-az-2"))
+					})
+				})
+				Context("when amazon's describe mount target returns creating then available", func() {
+					BeforeEach(func() {
+						count := 0
+						fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
+							if count == 0 {
+								count++
+								return &efs.DescribeMountTargetsOutput{
+									MountTargets: []*efs.MountTargetDescription{
+										{
+										MountTargetId:  aws.String("fake-mt-id-1"),
+										LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+										},
+										{
+											MountTargetId:  aws.String("fake-mt-id-2"),
+											LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+										},
+									},
+								}, nil
+							}
+							return &efs.DescribeMountTargetsOutput{
+								MountTargets: []*efs.MountTargetDescription{
+									{
+										MountTargetId:  aws.String("fake-mt-id-1"),
+										LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+									},
+									{
+										MountTargetId:  aws.String("fake-mt-id-2"),
+										LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+									},
+								},
+							}, nil
+						}
+					})
+					It("should succeed", func() {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(operationState.MountTargetStates[1]).To(Equal(efs.LifeCycleStateAvailable))
+						Expect(fakeEFSService.DescribeMountTargetsCallCount()).To(Equal(2))
+					})
+				})
+
 			})
 		})
 
@@ -404,7 +530,7 @@ var _ = Describe("Operation", func() {
 			spec = efsbroker.DeprovisionOperationSpec{
 				InstanceID:    instanceID,
 				FsID:          fsId,
-				MountTargetID: mountId,
+				MountTargetIDs: []string{mountId},
 			}
 			deprovisionOp = efsbroker.NewTestDeprovisionOperation(logger, fakeEFSService, fakeClock, spec, nil)
 		})
@@ -487,6 +613,39 @@ var _ = Describe("Operation", func() {
 				It("should error", func() {
 					Expect(err).To(HaveOccurred())
 				})
+				Context("when there are also many subnets", func() {
+					BeforeEach(func() {
+						spec = efsbroker.DeprovisionOperationSpec{
+							InstanceID:    instanceID,
+							FsID:          fsId,
+							MountTargetIDs: []string{"fake-mount-1","fake-mount-2"},
+						}
+						deprovisionOp = efsbroker.NewTestDeprovisionOperation(logger, fakeEFSService, fakeClock, spec, nil)
+					})
+					It("should succeed", func() {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(fakeEFSService.DeleteMountTargetCallCount()).To(Equal(2))
+					})
+					Context("when some of the targets are unavailable", func(){
+						BeforeEach(func() {
+							fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
+								MountTargets: []*efs.MountTargetDescription{{
+									MountTargetId:  aws.String("fake-mt-id1"),
+									LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+									IpAddress:      aws.String("1.1.1.1"),
+								}, {
+									MountTargetId:  aws.String("fake-mt-id2"),
+									LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+									IpAddress:      aws.String("1.1.1.2"),
+								}},
+							}, nil)
+						})
+						It("should fail", func() {
+							Expect(err).To(HaveOccurred())
+						})
+					})
+
+				})
 			})
 
 			Context("when describe mount targets returns unavailable mount target", func() {
@@ -562,7 +721,7 @@ var _ = Describe("Operation", func() {
 					Expect(err).NotTo(BeNil())
 				})
 			})
-			Context("when amazon's describe mount target returns an unexpected lifecycle state", func() {
+			Context("when amazon's describe mount target returns a deleting lifecycle state", func() {
 				BeforeEach(func() {
 					count := 0
 					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
@@ -580,6 +739,44 @@ var _ = Describe("Operation", func() {
 								MountTargetId:  aws.String("fake-mt-id"),
 								LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
 							}},
+						}, nil
+					}
+				})
+				It("should remain in the check mount target state", func() {
+					Expect(fakeClock.SleepCallCount()).To(Equal(1))
+				})
+			})
+			Context("when there are multiple mount points and not all are deleted", func() {
+				BeforeEach(func() {
+					spec = efsbroker.DeprovisionOperationSpec{
+						InstanceID:    instanceID,
+						FsID:          fsId,
+						MountTargetIDs: []string{"fake-mount-1","fake-mount-2"},
+					}
+					deprovisionOp = efsbroker.NewTestDeprovisionOperation(logger, fakeEFSService, fakeClock, spec, nil)
+
+					count := 0
+					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
+						if count == 0 {
+							count++
+							return &efs.DescribeMountTargetsOutput{
+								MountTargets: []*efs.MountTargetDescription{{
+									MountTargetId:  aws.String("fake-mt-id-1"),
+									LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+								},{
+									MountTargetId:  aws.String("fake-mt-id-2"),
+									LifeCycleState: aws.String(efs.LifeCycleStateDeleting),
+								},},
+							}, nil
+						}
+						return &efs.DescribeMountTargetsOutput{
+							MountTargets: []*efs.MountTargetDescription{{
+								MountTargetId:  aws.String("fake-mt-id-1"),
+								LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+							},{
+								MountTargetId:  aws.String("fake-mt-id-2"),
+								LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+							},},
 						}, nil
 					}
 				})

@@ -40,13 +40,17 @@ type staticState struct {
 
 type EFSInstance struct {
 	brokerapi.ProvisionDetails
-	EfsId         string `json:"EfsId"`
-	FsState       string `json:"FsState"`
-	MountId       string `json:"MountId"`
-	MountState    string `json:"MountState"`
-	MountPermsSet bool   `json:"MountPermsSet"`
-	MountIp       string `json:"MountIp"`
-	Err           error  `json:"Err"`
+	EfsId         string   `json:"EfsId"`
+	FsState       string   `json:"FsState"`
+	MountId       string   `json:"MountId"`
+	MountState    string   `json:"MountState"`
+	MountPermsSet bool     `json:"MountPermsSet"`
+	MountIp       string   `json:"MountIp"`
+	MountIds      []string `json:"MountIds"`
+	MountStates   []string `json:"MountStates"`
+	MountIps      []string `json:"MountIps"`
+	MountAZs      []string `json:"MountAZs"`
+	Err           error    `json:"Err"`
 }
 
 type dynamicState struct {
@@ -162,7 +166,7 @@ func (b *Broker) Provision(context context.Context, instanceID string, details b
 		return brokerapi.ProvisionedServiceSpec{}, brokerapi.ErrAsyncRequired
 	}
 
-	efsInstance := EFSInstance{details, "", "", "", "", false, "", nil}
+	efsInstance := EFSInstance{details, "", "", "", "", false, "", []string{}, []string{}, []string{}, []string{}, nil}
 
 	instanceDetails := brokerstore.ServiceInstance{
 		details.ServiceID,
@@ -212,10 +216,14 @@ func (b *Broker) Deprovision(context context.Context, instanceID string, details
 		return brokerapi.DeprovisionServiceSpec{}, errors.New("failed to casting interface back to EFSInstance")
 	}
 
+	if efsInstance.MountIds == nil || len(efsInstance.MountIds) == 0 {
+		efsInstance.MountIds = []string{efsInstance.MountId}
+	}
+
 	spec := DeprovisionOperationSpec{
-		InstanceID:    instanceID,
-		FsID:          efsInstance.EfsId,
-		MountTargetID: efsInstance.MountId,
+		InstanceID:     instanceID,
+		FsID:           efsInstance.EfsId,
+		MountTargetIDs: efsInstance.MountIds,
 	}
 	operation := b.DeprovisionOperation(logger, b.efsService, b.clock, spec, b.DeprovisionEvent)
 
@@ -270,7 +278,7 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 
 	efsInstance, ok := instanceDetails.ServiceFingerPrint.(EFSInstance)
 	if !ok {
-		return brokerapi.Binding{}, errors.New("failed to casting interface back to EFSInstance")
+		return brokerapi.Binding{}, errors.New("failed casting interface back to EFSInstance")
 	}
 
 	ip, err := b.getMountIp(efsInstance.EfsId)
@@ -280,7 +288,12 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 
 	source := ip + RootPath
 
-	mountConfig := map[string]interface{}{"source": source}
+	azMap := map[string]interface{}{}
+	for i, ip := range efsInstance.MountIps {
+		azMap[efsInstance.MountAZs[i]] = ip + RootPath
+	}
+
+	mountConfig := map[string]interface{}{"source": source, "az-map": azMap}
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response
@@ -431,9 +444,15 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 
 	efsInstance.EfsId = opState.FsID
 	efsInstance.FsState = opState.FsState
-	efsInstance.MountId = opState.MountTargetID
-	efsInstance.MountIp = opState.MountTargetIp
-	efsInstance.MountState = opState.MountTargetState
+
+	efsInstance.MountId = opState.MountTargetIDs[0]
+	efsInstance.MountIp = opState.MountTargetIps[0]
+	efsInstance.MountState = opState.MountTargetStates[0]
+
+	efsInstance.MountIds = opState.MountTargetIDs
+	efsInstance.MountIps = opState.MountTargetIps
+	efsInstance.MountAZs = opState.MountTargetAZs
+	efsInstance.MountStates = opState.MountTargetStates
 	efsInstance.MountPermsSet = opState.MountPermsSet
 	efsInstance.Err = opState.Err
 
@@ -524,7 +543,6 @@ func stateToLastOperation(instance EFSInstance) brokerapi.LastOperation {
 		case efs.LifeCycleStateCreating:
 			return brokerapi.LastOperation{State: brokerapi.InProgress, Description: desc}
 		case efs.LifeCycleStateAvailable:
-			// TODO check if the permissions have been opened up.
 			if instance.MountPermsSet {
 				return brokerapi.LastOperation{State: brokerapi.Succeeded, Description: desc}
 			} else {

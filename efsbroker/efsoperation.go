@@ -34,14 +34,15 @@ type Clock interface {
 }
 
 type OperationState struct {
-	InstanceID       string
-	FsID             string
-	FsState          string
-	MountTargetID    string
-	MountTargetState string
-	MountPermsSet    bool
-	MountTargetIp    string
-	Err              error
+	InstanceID        string
+	FsID              string
+	FsState           string
+	MountTargetIDs    []string
+	MountTargetStates []string
+	MountPermsSet     bool
+	MountTargetIps    []string
+	MountTargetAZs    []string
+	Err               error
 }
 
 func NewProvisionOperation(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation {
@@ -49,7 +50,7 @@ func NewProvisionOperation(logger lager.Logger, instanceID string, planID string
 }
 
 func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
-	return &ProvisionOperationStateMachine{
+	o := ProvisionOperationStateMachine{
 		planID,
 		efsService,
 		efsTools,
@@ -60,7 +61,14 @@ func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID str
 		updateCb,
 		nil,
 		nil,
+		nil,
 	}
+
+	o.state.MountTargetIDs = make([]string, len(o.subnets))
+	o.state.MountTargetIps = make([]string, len(o.subnets))
+	o.state.MountTargetStates = make([]string, len(o.subnets))
+	o.state.MountTargetAZs = make([]string, len(o.subnets))
+	return &o
 }
 
 type ProvisionOperationStateMachine struct {
@@ -74,12 +82,18 @@ type ProvisionOperationStateMachine struct {
 	updateCb        func(*OperationState)
 	nextState       func()
 	stateAfterSleep func()
+	azs             []string
 }
 
 func (o *ProvisionOperationStateMachine) Execute() {
 	logger := o.logger.Session("provision-execute")
 	logger.Info("start")
 	defer logger.Info("end")
+
+	o.azs = []string{}
+	for _, subnet := range o.subnets {
+		o.azs = append(o.azs, subnet.AZ)
+	}
 
 	err := o.CreateFs()
 	if err != nil {
@@ -91,12 +105,12 @@ func (o *ProvisionOperationStateMachine) Execute() {
 		return
 	}
 
-	err = o.CreateMountTarget()
+	err = o.CreateMountTargets()
 	if err != nil {
 		return
 	}
 
-	err = o.CheckMountTarget()
+	err = o.CheckMountTargets()
 	if err != nil {
 		return
 	}
@@ -171,27 +185,33 @@ func (o *ProvisionOperationStateMachine) CheckFs() error {
 	return nil
 }
 
-func (o *ProvisionOperationStateMachine) CreateMountTarget() error {
-	logger := o.logger.Session("create-mount-target")
+func (o *ProvisionOperationStateMachine) CreateMountTargets() error {
+	logger := o.logger.Session("create-mount-targets")
 	logger.Info("start")
 	defer logger.Info("end")
 	defer o.updateCb(o.state)
 
-	_, o.state.Err = o.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
-		FileSystemId:   aws.String(o.state.FsID),
-		SubnetId:       aws.String(o.subnets[0].ID),
-		SecurityGroups: []*string{aws.String(o.subnets[0].SecurityGroup)},
-	})
+	for i, subnet := range o.subnets {
+		var target *efs.MountTargetDescription
+		target, o.state.Err = o.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
+			FileSystemId:   aws.String(o.state.FsID),
+			SubnetId:       aws.String(subnet.ID),
+			SecurityGroups: []*string{aws.String(subnet.SecurityGroup)},
+		})
 
-	if o.state.Err != nil {
-		logger.Error("failed-to-create-mounts", o.state.Err)
-		return o.state.Err
+		if o.state.Err != nil {
+			logger.Error("failed-to-create-mounts", o.state.Err)
+			return o.state.Err
+		}
+
+		o.state.MountTargetIDs[i] = *target.MountTargetId
+		o.state.MountTargetAZs[i] = subnet.AZ
 	}
 
 	return nil
 }
 
-func (o *ProvisionOperationStateMachine) CheckMountTarget() error {
+func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 	logger := o.logger.Session("check-mount-target")
 	logger.Info("start")
 	defer logger.Info("end")
@@ -206,26 +226,49 @@ func (o *ProvisionOperationStateMachine) CheckMountTarget() error {
 			logger.Error("err-getting-mount-target-status", o.state.Err)
 			return o.state.Err
 		}
-		if len(mtOutput.MountTargets) != 1 {
-			o.state.Err = fmt.Errorf("AWS returned an unexpected number of mount targets: %d", len(mtOutput.MountTargets))
+		if len(mtOutput.MountTargets) != len(o.subnets) {
+			o.state.Err = fmt.Errorf("AWS returned an unexpected number of mount targets. got: %d expected %d", len(mtOutput.MountTargets), len(o.subnets))
 			logger.Error("error-at-amazon", o.state.Err)
 			return o.state.Err
 		}
 
-		o.state.MountTargetState = *mtOutput.MountTargets[0].LifeCycleState
-
-		switch o.state.MountTargetState {
-		case efs.LifeCycleStateAvailable:
-			o.state.MountTargetID = *mtOutput.MountTargets[0].MountTargetId
-			if mtOutput.MountTargets[0].IpAddress != nil {
-				o.state.MountTargetIp = *mtOutput.MountTargets[0].IpAddress
+		working := false
+		for _, target := range mtOutput.MountTargets {
+			var (
+				i  int
+				id string
+			)
+			found := false
+			for i, id = range o.state.MountTargetIDs {
+				if id == *target.MountTargetId {
+					found = true
+					break
+				}
 			}
-			return o.state.Err
-		case efs.LifeCycleStateCreating:
-			o.clock.Sleep(PollingInterval)
-		default:
-			o.state.Err = fmt.Errorf("Unexpected lifecycle state.  Expected creating or available, got %s", o.state.Err)
-			return o.state.Err
+			if !found {
+				o.state.Err = fmt.Errorf("Unknown Mount Target ID.  %s", *target.MountTargetId)
+				return o.state.Err
+			}
+			o.state.MountTargetStates[i] = *target.LifeCycleState
+
+			switch o.state.MountTargetStates[i] {
+			case efs.LifeCycleStateAvailable:
+				o.state.MountTargetIDs[i] = *target.MountTargetId
+				if target.IpAddress != nil {
+					o.state.MountTargetIps[i] = *target.IpAddress
+				}
+				continue
+			case efs.LifeCycleStateCreating:
+				o.clock.Sleep(PollingInterval)
+				working = true
+				break
+			default:
+				o.state.Err = fmt.Errorf("Unexpected lifecycle state.  Expected creating or available, got %s", o.state.Err)
+				return o.state.Err
+			}
+		}
+		if !working {
+			break
 		}
 	}
 
@@ -238,7 +281,7 @@ func (o *ProvisionOperationStateMachine) OpenPerms() error {
 	defer logger.Info("end")
 	defer o.updateCb(o.state)
 
-	opts := map[string]interface{}{"ip": o.state.MountTargetIp}
+	opts := map[string]interface{}{"ip": o.state.MountTargetIps[0], "ips": o.state.MountTargetIps, "azs": o.azs}
 
 	ctx := context.TODO()
 	env := driverhttp.NewHttpDriverEnv(logger, ctx)
@@ -256,17 +299,16 @@ func (o *ProvisionOperationStateMachine) OpenPerms() error {
 }
 
 type DeprovisionOperationSpec struct {
-	InstanceID    string
-	FsID          string
-	MountTargetID string
+	InstanceID     string
+	FsID           string
+	MountTargetIDs []string
 }
 
 func NewDeprovisionOperation(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation {
 	return &DeprovisionOperation{logger, efsService, clock, spec, &OperationState{InstanceID: spec.InstanceID}, updateCb}
 }
 
-func NewTestDeprovisionOperation(logger lager.Logger, efsService EFSService, clock Clock,
-	spec DeprovisionOperationSpec, updateCb func(*OperationState)) *DeprovisionOperation {
+func NewTestDeprovisionOperation(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) *DeprovisionOperation {
 	return &DeprovisionOperation{logger, efsService, clock, spec, &OperationState{InstanceID: spec.InstanceID}, updateCb}
 }
 
@@ -330,25 +372,29 @@ func (o *DeprovisionOperation) DeleteMountTarget(fsID string) error {
 		logger.Info("no-mount-targets")
 		return nil
 	}
-	if len(out.MountTargets) > 1 {
-		err = fmt.Errorf("Too many mount targets found, Expected 1, got %d", len(out.MountTargets))
+	if len(out.MountTargets) > len(o.spec.MountTargetIDs) {
+		err = fmt.Errorf("Too many mount targets found, Expected %d, got %d", len(o.spec.MountTargetIDs), len(out.MountTargets))
 		logger.Error("err-at-amazon", err)
 		return err
 	}
 
-	if *out.MountTargets[0].LifeCycleState != efs.LifeCycleStateAvailable {
-		err = errors.New("invalid lifecycle transition, please wait until all mount targets are available")
-		logger.Error("non-available-mount-targets", err)
-		return err
+	for _, target := range out.MountTargets {
+		if *target.LifeCycleState != efs.LifeCycleStateAvailable {
+			err = errors.New("invalid lifecycle transition, please wait until all mount targets are available")
+			logger.Error("non-available-mount-targets", err)
+			return err
+		}
 	}
 
 	logger.Info("deleting-mount-targets", lager.Data{"target-id": *out.MountTargets[0].MountTargetId})
-	_, err = o.efs.DeleteMountTarget(&efs.DeleteMountTargetInput{
-		MountTargetId: out.MountTargets[0].MountTargetId,
-	})
-	if err != nil {
-		logger.Error("failed-deleting-mount-targets", err)
-		return err
+	for _, target := range out.MountTargets {
+		_, err = o.efs.DeleteMountTarget(&efs.DeleteMountTargetInput{
+			MountTargetId: target.MountTargetId,
+		})
+		if err != nil {
+			logger.Error("failed-deleting-mount-targets", err)
+			return err
+		}
 	}
 
 	return nil
@@ -367,16 +413,27 @@ func (o *DeprovisionOperation) CheckMountTarget(fsID string) error {
 			logger.Error("err-getting-mount-target-status", err)
 			return err
 		}
-		if len(mtOutput.MountTargets) < 1 || *mtOutput.MountTargets[0].LifeCycleState == efs.LifeCycleStateDeleted {
+		if len(mtOutput.MountTargets) < 1 {
 			return nil
 		}
-		if len(mtOutput.MountTargets) > 1 {
-			err = fmt.Errorf("amazon returned unexpected number of mount targets.  Expected 1, got %d", mtOutput.MountTargets)
+
+		deleted := true
+		for _, target := range mtOutput.MountTargets {
+			if *target.LifeCycleState != efs.LifeCycleStateDeleted {
+				deleted = false
+				break
+			}
+		}
+		if deleted {
+			return nil
+		}
+
+		if len(mtOutput.MountTargets) > len(o.spec.MountTargetIDs) {
+			err = fmt.Errorf("amazon returned unexpected number of mount targets.  Expected %d, got %d", len(o.spec.MountTargetIDs), len(mtOutput.MountTargets))
 			logger.Error("err-at-amazon", err)
 			return err
-		} else {
-			o.clock.Sleep(PollingInterval)
 		}
+		o.clock.Sleep(PollingInterval)
 	}
 	return nil
 }

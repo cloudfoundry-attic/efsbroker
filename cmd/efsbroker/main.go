@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"code.cloudfoundry.org/cflager"
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/debugserver"
 	"code.cloudfoundry.org/efsbroker/efsbroker"
@@ -26,6 +25,7 @@ import (
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
 	"github.com/tedsuo/ifrit/http_server"
+	"code.cloudfoundry.org/lager/lagerflags"
 )
 
 var dataDir = flag.String(
@@ -127,7 +127,7 @@ func main() {
 
 	checkParams()
 
-	logger, logSink := cflager.New("efsbroker")
+	logger, logSink := lagerflags.New("efsbroker")
 	logger.Info("starting")
 	defer logger.Info("ends")
 
@@ -146,7 +146,7 @@ func main() {
 }
 
 func parseCommandLine() {
-	cflager.AddFlags(flag.CommandLine)
+	lagerflags.AddFlags(flag.CommandLine)
 	debugserver.AddFlags(flag.CommandLine)
 	flag.Parse()
 }

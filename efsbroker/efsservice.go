@@ -7,6 +7,8 @@ import "github.com/aws/aws-sdk-go/service/efs"
 type EFSService interface {
 	CreateFileSystem(*efs.CreateFileSystemInput) (*efs.FileSystemDescription, error)
 
+	CreateTags(*efs.CreateTagsInput) (*efs.CreateTagsOutput, error)
+
 	DeleteFileSystem(*efs.DeleteFileSystemInput) (*efs.DeleteFileSystemOutput, error)
 
 	DescribeFileSystems(*efs.DescribeFileSystemsInput) (*efs.DescribeFileSystemsOutput, error)

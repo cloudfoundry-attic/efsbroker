@@ -18,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
+	"github.com/pivotal-cf/brokerapi"
 )
 
 //type dynamicState struct {
@@ -94,7 +95,7 @@ var _ = Describe("Operation", func() {
 			provisionOp = efsbroker.NewProvisionStateMachine(
 				logger,
 				"instanceID",
-				"planId",
+				brokerapi.ProvisionDetails{PlanID: "planId"},
 				fakeEFSService,
 				fakeVolTools,
 				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
@@ -372,7 +373,7 @@ var _ = Describe("Operation", func() {
 					provisionOp = efsbroker.NewProvisionStateMachine(
 						logger,
 						"instanceID",
-						"planId",
+						brokerapi.ProvisionDetails{PlanID: "planId"},
 						fakeEFSService,
 						fakeVolTools,
 						[]efsbroker.Subnet{
@@ -388,13 +389,13 @@ var _ = Describe("Operation", func() {
 						if count == 0 {
 							count++
 							return &efs.MountTargetDescription{
-									MountTargetId:  aws.String("fake-mt-id-1"),
-									LifeCycleState: aws.String(efs.LifeCycleStateCreating),
+								MountTargetId:  aws.String("fake-mt-id-1"),
+								LifeCycleState: aws.String(efs.LifeCycleStateCreating),
 							}, nil
 						}
 						return &efs.MountTargetDescription{
-								MountTargetId:  aws.String("fake-mt-id-2"),
-								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							MountTargetId:  aws.String("fake-mt-id-2"),
+							LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
 						}, nil
 					}
 
@@ -451,8 +452,8 @@ var _ = Describe("Operation", func() {
 								return &efs.DescribeMountTargetsOutput{
 									MountTargets: []*efs.MountTargetDescription{
 										{
-										MountTargetId:  aws.String("fake-mt-id-1"),
-										LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+											MountTargetId:  aws.String("fake-mt-id-1"),
+											LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
 										},
 										{
 											MountTargetId:  aws.String("fake-mt-id-2"),
@@ -528,8 +529,8 @@ var _ = Describe("Operation", func() {
 			mountId = "fake-mount-id"
 
 			spec = efsbroker.DeprovisionOperationSpec{
-				InstanceID:    instanceID,
-				FsID:          fsId,
+				InstanceID:     instanceID,
+				FsID:           fsId,
 				MountTargetIDs: []string{mountId},
 			}
 			deprovisionOp = efsbroker.NewTestDeprovisionOperation(logger, fakeEFSService, fakeClock, spec, nil)
@@ -616,9 +617,9 @@ var _ = Describe("Operation", func() {
 				Context("when there are also many subnets", func() {
 					BeforeEach(func() {
 						spec = efsbroker.DeprovisionOperationSpec{
-							InstanceID:    instanceID,
-							FsID:          fsId,
-							MountTargetIDs: []string{"fake-mount-1","fake-mount-2"},
+							InstanceID:     instanceID,
+							FsID:           fsId,
+							MountTargetIDs: []string{"fake-mount-1", "fake-mount-2"},
 						}
 						deprovisionOp = efsbroker.NewTestDeprovisionOperation(logger, fakeEFSService, fakeClock, spec, nil)
 					})
@@ -626,7 +627,7 @@ var _ = Describe("Operation", func() {
 						Expect(err).NotTo(HaveOccurred())
 						Expect(fakeEFSService.DeleteMountTargetCallCount()).To(Equal(2))
 					})
-					Context("when some of the targets are unavailable", func(){
+					Context("when some of the targets are unavailable", func() {
 						BeforeEach(func() {
 							fakeEFSService.DescribeMountTargetsReturns(&efs.DescribeMountTargetsOutput{
 								MountTargets: []*efs.MountTargetDescription{{
@@ -749,9 +750,9 @@ var _ = Describe("Operation", func() {
 			Context("when there are multiple mount points and not all are deleted", func() {
 				BeforeEach(func() {
 					spec = efsbroker.DeprovisionOperationSpec{
-						InstanceID:    instanceID,
-						FsID:          fsId,
-						MountTargetIDs: []string{"fake-mount-1","fake-mount-2"},
+						InstanceID:     instanceID,
+						FsID:           fsId,
+						MountTargetIDs: []string{"fake-mount-1", "fake-mount-2"},
 					}
 					deprovisionOp = efsbroker.NewTestDeprovisionOperation(logger, fakeEFSService, fakeClock, spec, nil)
 
@@ -763,20 +764,20 @@ var _ = Describe("Operation", func() {
 								MountTargets: []*efs.MountTargetDescription{{
 									MountTargetId:  aws.String("fake-mt-id-1"),
 									LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
-								},{
+								}, {
 									MountTargetId:  aws.String("fake-mt-id-2"),
 									LifeCycleState: aws.String(efs.LifeCycleStateDeleting),
-								},},
+								}},
 							}, nil
 						}
 						return &efs.DescribeMountTargetsOutput{
 							MountTargets: []*efs.MountTargetDescription{{
 								MountTargetId:  aws.String("fake-mt-id-1"),
 								LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
-							},{
+							}, {
 								MountTargetId:  aws.String("fake-mt-id-2"),
 								LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
-							},},
+							}},
 						}, nil
 					}
 				})

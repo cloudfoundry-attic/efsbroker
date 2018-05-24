@@ -22,6 +22,19 @@ type FakeEFSService struct {
 		result1 *efs.FileSystemDescription
 		result2 error
 	}
+	CreateTagsStub        func(*efs.CreateTagsInput) (*efs.CreateTagsOutput, error)
+	createTagsMutex       sync.RWMutex
+	createTagsArgsForCall []struct {
+		arg1 *efs.CreateTagsInput
+	}
+	createTagsReturns struct {
+		result1 *efs.CreateTagsOutput
+		result2 error
+	}
+	createTagsReturnsOnCall map[int]struct {
+		result1 *efs.CreateTagsOutput
+		result2 error
+	}
 	DeleteFileSystemStub        func(*efs.DeleteFileSystemInput) (*efs.DeleteFileSystemOutput, error)
 	deleteFileSystemMutex       sync.RWMutex
 	deleteFileSystemArgsForCall []struct {
@@ -138,6 +151,57 @@ func (fake *FakeEFSService) CreateFileSystemReturnsOnCall(i int, result1 *efs.Fi
 	}
 	fake.createFileSystemReturnsOnCall[i] = struct {
 		result1 *efs.FileSystemDescription
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeEFSService) CreateTags(arg1 *efs.CreateTagsInput) (*efs.CreateTagsOutput, error) {
+	fake.createTagsMutex.Lock()
+	ret, specificReturn := fake.createTagsReturnsOnCall[len(fake.createTagsArgsForCall)]
+	fake.createTagsArgsForCall = append(fake.createTagsArgsForCall, struct {
+		arg1 *efs.CreateTagsInput
+	}{arg1})
+	fake.recordInvocation("CreateTags", []interface{}{arg1})
+	fake.createTagsMutex.Unlock()
+	if fake.CreateTagsStub != nil {
+		return fake.CreateTagsStub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fake.createTagsReturns.result1, fake.createTagsReturns.result2
+}
+
+func (fake *FakeEFSService) CreateTagsCallCount() int {
+	fake.createTagsMutex.RLock()
+	defer fake.createTagsMutex.RUnlock()
+	return len(fake.createTagsArgsForCall)
+}
+
+func (fake *FakeEFSService) CreateTagsArgsForCall(i int) *efs.CreateTagsInput {
+	fake.createTagsMutex.RLock()
+	defer fake.createTagsMutex.RUnlock()
+	return fake.createTagsArgsForCall[i].arg1
+}
+
+func (fake *FakeEFSService) CreateTagsReturns(result1 *efs.CreateTagsOutput, result2 error) {
+	fake.CreateTagsStub = nil
+	fake.createTagsReturns = struct {
+		result1 *efs.CreateTagsOutput
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeEFSService) CreateTagsReturnsOnCall(i int, result1 *efs.CreateTagsOutput, result2 error) {
+	fake.CreateTagsStub = nil
+	if fake.createTagsReturnsOnCall == nil {
+		fake.createTagsReturnsOnCall = make(map[int]struct {
+			result1 *efs.CreateTagsOutput
+			result2 error
+		})
+	}
+	fake.createTagsReturnsOnCall[i] = struct {
+		result1 *efs.CreateTagsOutput
 		result2 error
 	}{result1, result2}
 }
@@ -402,6 +466,8 @@ func (fake *FakeEFSService) Invocations() map[string][][]interface{} {
 	defer fake.invocationsMutex.RUnlock()
 	fake.createFileSystemMutex.RLock()
 	defer fake.createFileSystemMutex.RUnlock()
+	fake.createTagsMutex.RLock()
+	defer fake.createTagsMutex.RUnlock()
 	fake.deleteFileSystemMutex.RLock()
 	defer fake.deleteFileSystemMutex.RUnlock()
 	fake.describeFileSystemsMutex.RLock()

@@ -1,15 +1,12 @@
 package efsbroker
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"sync"
-
 	"path"
-
-	"context"
+	"sync"
 
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
@@ -78,7 +75,7 @@ type Broker struct {
 	mutex                lock
 	clock                clock.Clock
 	efsTools             efsvoltools.VolTools
-	ProvisionOperation   func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation
+	ProvisionOperation   func(logger lager.Logger, instanceID string, details brokerapi.ProvisionDetails, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation
 	DeprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation
 
 	static staticState
@@ -93,7 +90,7 @@ func New(
 	store brokerstore.Store,
 	efsService EFSService, subnets []Subnet,
 	efsTools efsvoltools.VolTools,
-	provisionOperation func(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation,
+	provisionOperation func(logger lager.Logger, instanceID string, details brokerapi.ProvisionDetails, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation,
 	deprovisionOperation func(logger lager.Logger, efsService EFSService, clock Clock, spec DeprovisionOperationSpec, updateCb func(*OperationState)) Operation,
 ) *Broker {
 
@@ -185,7 +182,7 @@ func (b *Broker) Provision(context context.Context, instanceID string, details b
 		return brokerapi.ProvisionedServiceSpec{}, fmt.Errorf("failed to store instance details %s", instanceID)
 	}
 
-	operation := b.ProvisionOperation(logger, instanceID, details.PlanID, b.efsService, b.efsTools, b.subnets, b.clock, b.ProvisionEvent)
+	operation := b.ProvisionOperation(logger, instanceID, details, b.efsService, b.efsTools, b.subnets, b.clock, b.ProvisionEvent)
 
 	go operation.Execute()
 

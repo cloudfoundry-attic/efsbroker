@@ -15,6 +15,7 @@ import (
 	"code.cloudfoundry.org/voldriver/driverhttp"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/efs"
+	"github.com/pivotal-cf/brokerapi"
 )
 
 //go:generate counterfeiter -o efsfakes/fake_operation.go . Operation
@@ -45,34 +46,34 @@ type OperationState struct {
 	Err               error
 }
 
-func NewProvisionOperation(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation {
-	return NewProvisionStateMachine(logger, instanceID, planID, efsService, efsTools, subnets, clock, updateCb)
+func NewProvisionOperation(logger lager.Logger, instanceID string, details brokerapi.ProvisionDetails, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation {
+	return NewProvisionStateMachine(logger, instanceID, details, efsService, efsTools, subnets, clock, updateCb)
 }
 
-func NewProvisionStateMachine(logger lager.Logger, instanceID string, planID string, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
-	o := ProvisionOperationStateMachine{
-		planID,
+func NewProvisionStateMachine(logger lager.Logger, instanceID string, details brokerapi.ProvisionDetails, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) *ProvisionOperationStateMachine {
+	return &ProvisionOperationStateMachine{
+		details,
 		efsService,
 		efsTools,
 		subnets,
 		logger,
 		clock,
-		&OperationState{InstanceID: instanceID},
+		&OperationState{
+			InstanceID:        instanceID,
+			MountTargetIDs:    make([]string, len(subnets)),
+			MountTargetIps:    make([]string, len(subnets)),
+			MountTargetStates: make([]string, len(subnets)),
+			MountTargetAZs:    make([]string, len(subnets)),
+		},
 		updateCb,
 		nil,
 		nil,
 		nil,
 	}
-
-	o.state.MountTargetIDs = make([]string, len(o.subnets))
-	o.state.MountTargetIps = make([]string, len(o.subnets))
-	o.state.MountTargetStates = make([]string, len(o.subnets))
-	o.state.MountTargetAZs = make([]string, len(o.subnets))
-	return &o
 }
 
 type ProvisionOperationStateMachine struct {
-	planID          string
+	details         brokerapi.ProvisionDetails
 	efsService      EFSService
 	efsTools        efsvoltools.VolTools
 	subnets         []Subnet
@@ -130,15 +131,25 @@ func (o *ProvisionOperationStateMachine) CreateFs() error {
 	var fsDescriptor *efs.FileSystemDescription
 	fsDescriptor, o.state.Err = o.efsService.CreateFileSystem(&efs.CreateFileSystemInput{
 		CreationToken:   aws.String(o.state.InstanceID),
-		PerformanceMode: planIDToPerformanceMode(o.planID),
+		PerformanceMode: planIDToPerformanceMode(o.details.PlanID),
 	})
 	if o.state.Err != nil {
 		logger.Error("provision-state-start-failed-to-create-fs", o.state.Err)
-		o.state.Err = o.state.Err
 		return o.state.Err
 	}
 	o.state.FsID = *fsDescriptor.FileSystemId
-	return nil
+
+	_, o.state.Err = o.efsService.CreateTags(&efs.CreateTagsInput{
+		FileSystemId: fsDescriptor.FileSystemId,
+		Tags: []*efs.Tag{
+			{Key: aws.String("organization_guid"), Value: aws.String(o.details.OrganizationGUID)},
+			{Key: aws.String("space_guid"), Value: aws.String(o.details.SpaceGUID)},
+			{Key: aws.String("service_id"), Value: aws.String(o.details.ServiceID)},
+			{Key: aws.String("plan_id"), Value: aws.String(o.details.PlanID)},
+			{Key: aws.String("instance"), Value: aws.String(o.state.InstanceID)},
+		},
+	})
+	return o.state.Err
 }
 
 func (o *ProvisionOperationStateMachine) CheckFs() error {

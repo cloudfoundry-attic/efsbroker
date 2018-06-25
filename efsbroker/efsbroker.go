@@ -290,14 +290,14 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 		azMap[efsInstance.MountAZs[i]] = ip + RootPath
 	}
 
-	mountConfig := map[string]interface{}{"source": source, "az-map": azMap}
+	mountConfig := map[string]interface{}{"source": source, "az-map": azMap, "experimental":true, "version":"4.1"}
 
 	return brokerapi.Binding{
 		Credentials: struct{}{}, // if nil, cloud controller chokes on response
 		VolumeMounts: []brokerapi.VolumeMount{{
 			ContainerDir: evaluateContainerPath(params, instanceID),
 			Mode:         mode,
-			Driver:       "efsdriver",
+			Driver:       "nfsv3driver",
 			DeviceType:   "shared",
 			Device: brokerapi.SharedDevice{
 				VolumeId:    instanceID,

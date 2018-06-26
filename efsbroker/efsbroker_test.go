@@ -522,16 +522,7 @@ var _ = Describe("Broker", func() {
 				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(binding.VolumeMounts[0].Driver).To(Equal("nfsv3driver"))
-			})
-
-			It("sets version and experimental options", func() {
-				binding, err := broker.Bind(ctx, instanceID, bindingID, bindDetails)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(len(binding.VolumeMounts)).To(Equal(1))
-				Expect(binding.VolumeMounts[0].Device.MountConfig["version"]).To(Equal("4.1"))
-				Expect(binding.VolumeMounts[0].Device.MountConfig["experimental"]).To(Equal(true))
+				Expect(binding.VolumeMounts[0].Driver).To(Equal("efsdriver"))
 			})
 
 			It("fills in the group id", func() {

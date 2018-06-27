@@ -18,6 +18,9 @@ import (
 	"code.cloudfoundry.org/lager"
 	"code.cloudfoundry.org/service-broker-store/brokerstore"
 
+	"io/ioutil"
+
+	"code.cloudfoundry.org/lager/lagerflags"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/efs"
@@ -25,7 +28,6 @@ import (
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/grouper"
 	"github.com/tedsuo/ifrit/http_server"
-	"code.cloudfoundry.org/lager/lagerflags"
 )
 
 var dataDir = flag.String(
@@ -78,10 +80,10 @@ var dbName = flag.String(
 	"(optional) database name when using SQL to store broker state",
 )
 
-var dbCACert = flag.String(
-	"dbCACert",
+var dbCACertPath = flag.String(
+	"dbCACertPath",
 	"",
-	"(optional) CA Cert to verify SSL connection",
+	"(optional) Path to CA Cert for database SSL connection",
 )
 
 var cfServiceName = flag.String(
@@ -215,7 +217,7 @@ func parseSubnets() []efsbroker.Subnet {
 	}
 
 	ret := []efsbroker.Subnet{}
-	for i,s := range subnetIDs {
+	for i, s := range subnetIDs {
 		ret = append(ret, efsbroker.Subnet{s, AZs[i], securityGroups[i]})
 	}
 	return ret
@@ -233,7 +235,16 @@ func createServer(logger lager.Logger) ifrit.Runner {
 		parseVcapServices(logger, &osshim.OsShim{})
 	}
 
-	store := brokerstore.NewStore(logger, *dbDriver, dbUsername, dbPassword, *dbHostname, *dbPort, *dbName, *dbCACert, fileName)
+	var dbCACert string
+	if *dbCACertPath != "" {
+		b, err := ioutil.ReadFile(*dbCACertPath)
+		if err != nil {
+			logger.Fatal("cannot-read-db-ca-cert", err, lager.Data{"path": *dbCACertPath})
+		}
+		dbCACert = string(b)
+	}
+
+	store := brokerstore.NewStore(logger, *dbDriver, dbUsername, dbPassword, *dbHostname, *dbPort, *dbName, dbCACert, fileName)
 
 	config := aws.NewConfig()
 

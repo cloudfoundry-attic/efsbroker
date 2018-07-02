@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"reflect"
 	"sync"
-	"path"
 
 	"code.cloudfoundry.org/clock"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
@@ -209,7 +209,7 @@ func (b *Broker) Deprovision(context context.Context, instanceID string, details
 		return brokerapi.DeprovisionServiceSpec{}, brokerapi.ErrInstanceDoesNotExist
 	}
 
-	efsInstance, err := getFingerprint(instance.ServiceFingerPrint)
+	efsInstance, err := getFingerprint(logger, instance.ServiceFingerPrint)
 	if err != nil {
 		return brokerapi.DeprovisionServiceSpec{}, errors.New(fmt.Sprintf("failed to deserialize details for instance %s", instanceID))
 	}
@@ -274,13 +274,13 @@ func (b *Broker) Bind(context context.Context, instanceID string, bindingID stri
 		return brokerapi.Binding{}, err
 	}
 
-	efsInstance, err := getFingerprint(instanceDetails.ServiceFingerPrint)
+	efsInstance, err := getFingerprint(logger, instanceDetails.ServiceFingerPrint)
 	if err != nil {
 		return brokerapi.Binding{}, errors.New(fmt.Sprintf("failed to deserialize details for binding %s", bindingID))
 	}
 
 	empty := EFSInstance{}
-	if reflect.DeepEqual(empty,efsInstance) {
+	if reflect.DeepEqual(empty, efsInstance) {
 		return brokerapi.Binding{}, errors.New(fmt.Sprintf("invalid efs instance for binding %s", bindingID))
 	}
 
@@ -381,23 +381,23 @@ func (b *Broker) LastOperation(_ context.Context, instanceID string, operationDa
 	switch operationData {
 	case "provision":
 		instance, err := b.store.RetrieveInstanceDetails(instanceID)
-
 		if err != nil {
 			logger.Info("instance-not-found")
 			return brokerapi.LastOperation{}, brokerapi.ErrInstanceDoesNotExist
 		}
+		logger.Debug("service-instance", lager.Data{"instance": instance})
 
-        efsInstance, err := getFingerprint(instance.ServiceFingerPrint)
-        if err != nil {
-            return brokerapi.LastOperation{}, errors.New(fmt.Sprintf("failed to deserialize details for instance %s", instanceID))
-        }
+		efsInstance, err := getFingerprint(logger, instance.ServiceFingerPrint)
+		if err != nil {
+			return brokerapi.LastOperation{}, errors.New(fmt.Sprintf("failed to deserialize details for instance %s", instanceID))
+		}
+		logger.Debug("efs-instance", lager.Data{"efs-instance": efsInstance})
 
 		if efsInstance.Err != nil {
 			logger.Info(fmt.Sprintf("last-operation-error %#v", efsInstance.Err))
 			return brokerapi.LastOperation{State: brokerapi.Failed, Description: efsInstance.Err.Error()}, nil
 		}
 
-		logger.Debug(fmt.Sprintf("Instance data %#v", efsInstance))
 		return stateToLastOperation(efsInstance), nil
 	case "deprovision":
 		instance, err := b.store.RetrieveInstanceDetails(instanceID)
@@ -405,10 +405,10 @@ func (b *Broker) LastOperation(_ context.Context, instanceID string, operationDa
 		if err != nil {
 			return brokerapi.LastOperation{State: brokerapi.Succeeded}, nil
 		} else {
-            efsInstance, err := getFingerprint(instance.ServiceFingerPrint)
-            if err != nil {
-                return brokerapi.LastOperation{}, errors.New(fmt.Sprintf("failed to deserialize details for instance %s", instanceID))
-            }
+			efsInstance, err := getFingerprint(logger, instance.ServiceFingerPrint)
+			if err != nil {
+				return brokerapi.LastOperation{}, errors.New(fmt.Sprintf("failed to deserialize details for instance %s", instanceID))
+			}
 			if efsInstance.Err != nil {
 				return brokerapi.LastOperation{State: brokerapi.Failed}, nil
 			} else {
@@ -443,6 +443,8 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 		logger.Error("instance-not-found", err)
 	}
 
+	logger.Debug("updated-operation-state", lager.Data{"id": opState.InstanceID, "state": opState})
+
 	var efsInstance EFSInstance
 
 	efsInstance.EfsId = opState.FsID
@@ -472,6 +474,8 @@ func (b *Broker) ProvisionEvent(opState *OperationState) {
 		logger.Error("failed to store instance details", err)
 		return
 	}
+
+	logger.Debug("updated-store", lager.Data{"id": opState.InstanceID, "details": instance})
 }
 
 func (b *Broker) DeprovisionEvent(opState *OperationState) {
@@ -502,10 +506,10 @@ func (b *Broker) DeprovisionEvent(opState *OperationState) {
 			return
 		}
 
-        efsInstance, err := getFingerprint(instance.ServiceFingerPrint)
-        if err != nil {
-            return
-        }
+		efsInstance, err := getFingerprint(logger, instance.ServiceFingerPrint)
+		if err != nil {
+			return
+		}
 
 		efsInstance.Err = opState.Err
 
@@ -609,7 +613,11 @@ func readOnlyToMode(ro bool) string {
 	return "rw"
 }
 
-func getFingerprint(rawObject interface{}) (EFSInstance, error) {
+func getFingerprint(logger lager.Logger, rawObject interface{}) (EFSInstance, error) {
+	logger = logger.Session("fingerprint").WithData(lager.Data{"raw-object": rawObject})
+	logger.Info("start")
+	defer logger.Info("end")
+
 	fingerprint, ok := rawObject.(EFSInstance)
 	if ok {
 		return fingerprint, nil
@@ -627,5 +635,5 @@ func getFingerprint(rawObject interface{}) (EFSInstance, error) {
 		return EFSInstance{}, err
 	}
 
-	return fingerprint, nil
+	return efsInstance, nil
 }

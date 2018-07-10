@@ -244,7 +244,13 @@ func createServer(logger lager.Logger) ifrit.Runner {
 		dbCACert = string(b)
 	}
 
-	store := brokerstore.NewStore(logger, *dbDriver, dbUsername, dbPassword, *dbHostname, *dbPort, *dbName, dbCACert, fileName)
+	store := brokerstore.NewStore(
+		logger,
+		*dbDriver, dbUsername, dbPassword, *dbHostname, *dbPort, *dbName, dbCACert,
+		"", "", "", "", "",
+		fileName,
+		"",
+	)
 
 	config := aws.NewConfig()
 

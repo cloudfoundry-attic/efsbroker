@@ -390,6 +390,29 @@ var _ = Describe("Broker", func() {
 				})
 			})
 
+			Context("when aws reports an error", func() {
+				BeforeEach(func() {
+					fakeInstance = brokerstore.ServiceInstance{
+						ServiceID:        instanceID,
+						PlanID:           "fake-plan-id",
+						OrganizationGUID: "fake-org-guid",
+						SpaceGUID:        "fake-space-guid",
+						ServiceFingerPrint: efsbroker.EFSInstance{
+							EfsId:   fsID,
+							FsState: "available",
+							Err:     efsbroker.NewOperationStateErr("aws-creation-error"),
+						},
+					}
+					fakeStore.RetrieveInstanceDetailsReturns(fakeInstance, nil)
+				})
+
+				It("returns the failed state", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(op.State).To(Equal(brokerapi.Failed))
+					Expect(op.Description).To(Equal("aws-creation-error"))
+				})
+			})
+
 			Context("when the instance doesn't exist", func() {
 				BeforeEach(func() {
 					fakeStore.RetrieveInstanceDetailsReturns(brokerstore.ServiceInstance{}, errors.New("not found"))
@@ -631,6 +654,38 @@ var _ = Describe("Broker", func() {
 			It("should update state", func() {
 				Expect(fakeStore.DeleteInstanceDetailsCallCount()).To(Equal(1))
 				Expect(fakeStore.CreateInstanceDetailsCallCount()).To(Equal(1))
+			})
+
+			Context("when provisioning event with error", func() {
+				BeforeEach(func() {
+					opState = efsbroker.OperationState{
+						FsID:              "foo",
+						FsState:           efs.LifeCycleStateAvailable,
+						MountTargetIDs:    []string{""},
+						MountTargetStates: []string{""},
+						MountPermsSet:     false,
+						MountTargetIps:    []string{""},
+						Err:               efsbroker.NewOperationStateErr("aws-creation-error"),
+					}
+					fakeStore.CreateInstanceDetailsStub = func(instanceID string, instance brokerstore.ServiceInstance) error {
+						instanceJSON, err := json.Marshal(instance)
+						Expect(err).NotTo(HaveOccurred())
+
+						var retrievedInstance brokerstore.ServiceInstance
+						err = json.Unmarshal(instanceJSON, &retrievedInstance)
+						Expect(err).NotTo(HaveOccurred())
+
+						fakeStore.RetrieveInstanceDetailsReturns(retrievedInstance, nil)
+						return nil
+					}
+				})
+
+				It("should be able to return last operation with error", func() {
+					op, err := broker.LastOperation(ctx, instanceID, "provision")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(op.State).To(Equal(brokerapi.Failed))
+					Expect(op.Description).To(Equal("aws-creation-error"))
+				})
 			})
 		})
 

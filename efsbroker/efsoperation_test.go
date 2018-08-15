@@ -120,13 +120,13 @@ var _ = Describe("Operation", func() {
 				})
 			})
 			Context("when amazon's create file system returns error", func() {
-				var SomeErr = fmt.Errorf("some err")
 				BeforeEach(func() {
-					fakeEFSService.CreateFileSystemReturns(nil, SomeErr)
+					fakeEFSService.CreateFileSystemReturns(nil, fmt.Errorf("some-error"))
 				})
+
 				It("should error", func() {
 					Expect(err).To(HaveOccurred())
-					Expect(operationState.Err).To(Equal(SomeErr))
+					Expect(operationState.Err).To(Equal(efsbroker.NewOperationStateErr("some-error")))
 				})
 			})
 		})

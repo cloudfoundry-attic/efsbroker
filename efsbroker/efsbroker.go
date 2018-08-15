@@ -38,17 +38,17 @@ type staticState struct {
 
 type EFSInstance struct {
 	brokerapi.ProvisionDetails
-	EfsId         string   `json:"EfsId"`
-	FsState       string   `json:"FsState"`
-	MountId       string   `json:"MountId"`
-	MountState    string   `json:"MountState"`
-	MountPermsSet bool     `json:"MountPermsSet"`
-	MountIp       string   `json:"MountIp"`
-	MountIds      []string `json:"MountIds"`
-	MountStates   []string `json:"MountStates"`
-	MountIps      []string `json:"MountIps"`
-	MountAZs      []string `json:"MountAZs"`
-	Err           error    `json:"Err"`
+	EfsId         string             `json:"EfsId"`
+	FsState       string             `json:"FsState"`
+	MountId       string             `json:"MountId"`
+	MountState    string             `json:"MountState"`
+	MountPermsSet bool               `json:"MountPermsSet"`
+	MountIp       string             `json:"MountIp"`
+	MountIds      []string           `json:"MountIds"`
+	MountStates   []string           `json:"MountStates"`
+	MountIps      []string           `json:"MountIps"`
+	MountAZs      []string           `json:"MountAZs"`
+	Err           *OperationStateErr `json:"Err"`
 }
 
 type dynamicState struct {

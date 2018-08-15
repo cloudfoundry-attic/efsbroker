@@ -34,6 +34,30 @@ type Clock interface {
 	Sleep(d time.Duration)
 }
 
+type OperationStateErr struct {
+	Message string `json:"message"`
+}
+
+func WrapOperationStateErr(err error) *OperationStateErr {
+	if operationStateErr, ok := err.(*OperationStateErr); ok {
+		return operationStateErr
+	}
+
+	return &OperationStateErr{
+		Message: err.Error(),
+	}
+}
+
+func NewOperationStateErr(format string, args ...interface{}) *OperationStateErr {
+	return &OperationStateErr{
+		Message: fmt.Sprintf(format, args...),
+	}
+}
+
+func (e *OperationStateErr) Error() string {
+	return e.Message
+}
+
 type OperationState struct {
 	InstanceID        string
 	FsID              string
@@ -43,7 +67,7 @@ type OperationState struct {
 	MountPermsSet     bool
 	MountTargetIps    []string
 	MountTargetAZs    []string
-	Err               error
+	Err               *OperationStateErr
 }
 
 func NewProvisionOperation(logger lager.Logger, instanceID string, details brokerapi.ProvisionDetails, efsService EFSService, efsTools efsvoltools.VolTools, subnets []Subnet, clock Clock, updateCb func(*OperationState)) Operation {
@@ -128,18 +152,19 @@ func (o *ProvisionOperationStateMachine) CreateFs() error {
 	defer logger.Info("end")
 	defer o.updateCb(o.state)
 
-	var fsDescriptor *efs.FileSystemDescription
-	fsDescriptor, o.state.Err = o.efsService.CreateFileSystem(&efs.CreateFileSystemInput{
+	fsDescriptor, err := o.efsService.CreateFileSystem(&efs.CreateFileSystemInput{
 		CreationToken:   aws.String(o.state.InstanceID),
 		PerformanceMode: planIDToPerformanceMode(o.details.PlanID),
 	})
-	if o.state.Err != nil {
+	if err != nil {
+		o.state.Err = WrapOperationStateErr(err)
 		logger.Error("provision-state-start-failed-to-create-fs", o.state.Err)
 		return o.state.Err
 	}
+
 	o.state.FsID = *fsDescriptor.FileSystemId
 
-	_, o.state.Err = o.efsService.CreateTags(&efs.CreateTagsInput{
+	_, err = o.efsService.CreateTags(&efs.CreateTagsInput{
 		FileSystemId: fsDescriptor.FileSystemId,
 		Tags: []*efs.Tag{
 			{Key: aws.String("organization_guid"), Value: aws.String(o.details.OrganizationGUID)},
@@ -149,7 +174,13 @@ func (o *ProvisionOperationStateMachine) CreateFs() error {
 			{Key: aws.String("instance"), Value: aws.String(o.state.InstanceID)},
 		},
 	})
-	return o.state.Err
+	if err != nil {
+		o.state.Err = WrapOperationStateErr(err)
+		logger.Error("provision-state-start-failed-to-create-tags", o.state.Err)
+		return o.state.Err
+	}
+
+	return nil
 }
 
 func (o *ProvisionOperationStateMachine) CheckFs() error {
@@ -159,23 +190,23 @@ func (o *ProvisionOperationStateMachine) CheckFs() error {
 	defer o.updateCb(o.state)
 
 	for true {
-		var output *efs.DescribeFileSystemsOutput
-		output, o.state.Err = o.efsService.DescribeFileSystems(&efs.DescribeFileSystemsInput{
+		output, err := o.efsService.DescribeFileSystems(&efs.DescribeFileSystemsInput{
 			FileSystemId: aws.String(o.state.FsID),
 		})
-		if o.state.Err != nil {
+		if err != nil {
+			o.state.Err = WrapOperationStateErr(err)
 			logger.Error("err-getting-fs-status", o.state.Err)
 			//o.nextState = o.Finish
 			return o.state.Err
 		}
 		if len(output.FileSystems) != 1 {
-			o.state.Err = fmt.Errorf("AWS returned an unexpected number of filesystems: %d", len(output.FileSystems))
+			o.state.Err = NewOperationStateErr("AWS returned an unexpected number of filesystems: %d", len(output.FileSystems))
 			logger.Error("err-at-amazon", o.state.Err)
 			//o.nextState = o.Finish
 			return o.state.Err
 		}
 		if output.FileSystems[0].LifeCycleState == nil {
-			o.state.Err = errors.New("AWS returned an unexpected filesystem state")
+			o.state.Err = NewOperationStateErr("AWS returned an unexpected filesystem state")
 			logger.Error("err-at-amazon", o.state.Err)
 			//o.nextState = o.Finish
 			return o.state.Err
@@ -189,7 +220,7 @@ func (o *ProvisionOperationStateMachine) CheckFs() error {
 		case efs.LifeCycleStateCreating:
 			o.clock.Sleep(PollingInterval)
 		default:
-			o.state.Err = fmt.Errorf("Unexpected lifecycle state.  Expected creating or available.  Got %s", o.state.FsState)
+			o.state.Err = NewOperationStateErr("Unexpected lifecycle state. Expected creating or available. Got %s", o.state.FsState)
 			return o.state.Err
 		}
 	}
@@ -203,14 +234,13 @@ func (o *ProvisionOperationStateMachine) CreateMountTargets() error {
 	defer o.updateCb(o.state)
 
 	for i, subnet := range o.subnets {
-		var target *efs.MountTargetDescription
-		target, o.state.Err = o.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
+		target, err := o.efsService.CreateMountTarget(&efs.CreateMountTargetInput{
 			FileSystemId:   aws.String(o.state.FsID),
 			SubnetId:       aws.String(subnet.ID),
 			SecurityGroups: []*string{aws.String(subnet.SecurityGroup)},
 		})
-
-		if o.state.Err != nil {
+		if err != nil {
+			o.state.Err = WrapOperationStateErr(err)
 			logger.Error("failed-to-create-mounts", o.state.Err)
 			return o.state.Err
 		}
@@ -229,16 +259,16 @@ func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 	defer o.updateCb(o.state)
 
 	for true {
-		var mtOutput *efs.DescribeMountTargetsOutput
-		mtOutput, o.state.Err = o.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
+		mtOutput, err := o.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 			FileSystemId: aws.String(o.state.FsID),
 		})
-		if o.state.Err != nil {
+		if err != nil {
+			o.state.Err = WrapOperationStateErr(err)
 			logger.Error("err-getting-mount-target-status", o.state.Err)
 			return o.state.Err
 		}
 		if len(mtOutput.MountTargets) != len(o.subnets) {
-			o.state.Err = fmt.Errorf("AWS returned an unexpected number of mount targets. got: %d expected %d", len(mtOutput.MountTargets), len(o.subnets))
+			o.state.Err = NewOperationStateErr("AWS returned an unexpected number of mount targets. Got: %d expected %d", len(mtOutput.MountTargets), len(o.subnets))
 			logger.Error("error-at-amazon", o.state.Err)
 			return o.state.Err
 		}
@@ -257,7 +287,7 @@ func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 				}
 			}
 			if !found {
-				o.state.Err = fmt.Errorf("Unknown Mount Target ID.  %s", *target.MountTargetId)
+				o.state.Err = NewOperationStateErr("Unknown Mount Target ID. %s", *target.MountTargetId)
 				return o.state.Err
 			}
 			o.state.MountTargetStates[i] = *target.LifeCycleState
@@ -274,7 +304,7 @@ func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 				working = true
 				break
 			default:
-				o.state.Err = fmt.Errorf("Unexpected lifecycle state.  Expected creating or available, got %s", o.state.Err)
+				o.state.Err = NewOperationStateErr("Unexpected lifecycle state. Expected creating or available, got %s", o.state.Err)
 				return o.state.Err
 			}
 		}
@@ -299,7 +329,7 @@ func (o *ProvisionOperationStateMachine) OpenPerms() error {
 
 	resp := o.efsTools.OpenPerms(env, efsvoltools.OpenPermsRequest{Name: o.state.FsID, Opts: opts})
 	if resp.Err != "" {
-		o.state.Err = errors.New(resp.Err)
+		o.state.Err = NewOperationStateErr(resp.Err)
 		logger.Error("failed-to-open-mount-permissions", o.state.Err)
 		return o.state.Err
 	}
@@ -341,29 +371,28 @@ func (o *DeprovisionOperation) Execute() {
 
 	err := o.DeleteMountTarget(o.spec.FsID)
 	if err != nil {
-		o.state.Err = err
+		o.state.Err = WrapOperationStateErr(err)
 		return
 	}
 	o.logger.Info("mount target deleted")
 
 	err = o.CheckMountTarget(o.spec.FsID)
 	if err != nil {
-		o.state.Err = err
+		o.state.Err = WrapOperationStateErr(err)
 		return
 	}
 
 	err = o.DeleteFs(o.spec.FsID)
 	if err != nil {
-		o.state.Err = err
+		o.state.Err = WrapOperationStateErr(err)
 		return
 	}
 
 	err = o.CheckFs(o.spec.FsID)
 	if err != nil {
-		o.state.Err = err
+		o.state.Err = WrapOperationStateErr(err)
 		return
 	}
-
 }
 
 func (o *DeprovisionOperation) DeleteMountTarget(fsID string) error {

@@ -10,7 +10,6 @@ import (
 	"code.cloudfoundry.org/efsdriver/efsdriverfakes"
 	"code.cloudfoundry.org/efsdriver/efsvoltools"
 	"code.cloudfoundry.org/goshims/ioutilshim/ioutil_fake"
-	"code.cloudfoundry.org/goshims/osshim/os_fake"
 	"code.cloudfoundry.org/lager"
 	"code.cloudfoundry.org/lager/lagertest"
 	"github.com/aws/aws-sdk-go/aws"
@@ -72,10 +71,8 @@ var _ = Describe("Operation", func() {
 			err                error
 			filesystemID       *string
 			provisionOp        *efsbroker.ProvisionOperationStateMachine
-			fakeOs             *os_fake.FakeOs
 			fakeIoutil         *ioutil_fake.FakeIoutil
 			WriteFileCallCount int
-			WriteFileWrote     string
 			operationState     *efsbroker.OperationState
 		)
 
@@ -84,12 +81,10 @@ var _ = Describe("Operation", func() {
 		}
 
 		BeforeEach(func() {
-			fakeOs = &os_fake.FakeOs{}
 			fakeIoutil = &ioutil_fake.FakeIoutil{}
 			fakeVolTools = &efsdriverfakes.FakeVolTools{}
 			fakeIoutil.WriteFileStub = func(filename string, data []byte, perm os.FileMode) error {
 				WriteFileCallCount++
-				WriteFileWrote = string(data)
 				return nil
 			}
 			provisionOp = efsbroker.NewProvisionStateMachine(

@@ -185,16 +185,14 @@ var _ = Describe("Broker", func() {
 
 		Context(".Deprovision", func() {
 			var (
-				instanceID       string
-				asyncAllowed     bool
-				provisionDetails brokerapi.ProvisionDetails
-				fakeInstance     brokerstore.ServiceInstance
+				instanceID   string
+				asyncAllowed bool
+				fakeInstance brokerstore.ServiceInstance
 
 				err error
 			)
 
 			BeforeEach(func() {
-				provisionDetails = brokerapi.ProvisionDetails{PlanID: "generalPurpose"}
 				asyncAllowed = true
 
 				fakeInstance = brokerstore.ServiceInstance{

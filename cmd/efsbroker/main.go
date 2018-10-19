@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,11 +17,8 @@ import (
 	"code.cloudfoundry.org/efsdriver/efsvoltools/voltoolshttp"
 	"code.cloudfoundry.org/goshims/osshim"
 	"code.cloudfoundry.org/lager"
-	"code.cloudfoundry.org/service-broker-store/brokerstore"
-
-	"io/ioutil"
-
 	"code.cloudfoundry.org/lager/lagerflags"
+	"code.cloudfoundry.org/service-broker-store/brokerstore"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/efs"
@@ -129,7 +127,7 @@ func main() {
 
 	checkParams()
 
-	logger, logSink := lagerflags.New("efsbroker")
+	logger, logTap := newLogger()
 	logger.Info("starting")
 	defer logger.Info("ends")
 
@@ -137,7 +135,7 @@ func main() {
 
 	if dbgAddr := debugserver.DebugAddress(flag.CommandLine); dbgAddr != "" {
 		server = utils.ProcessRunnerFor(grouper.Members{
-			{"debug-server", debugserver.Runner(dbgAddr, logSink)},
+			{"debug-server", debugserver.Runner(dbgAddr, logTap)},
 			{"broker-api", server},
 		})
 	}
@@ -170,6 +168,13 @@ func checkParams() {
 		flag.Usage()
 		os.Exit(1)
 	}
+}
+
+func newLogger() (lager.Logger, *lager.ReconfigurableSink) {
+	lagerConfig := lagerflags.ConfigFromFlags()
+	lagerConfig.RedactSecrets = true
+
+	return lagerflags.NewFromConfig("efsbroker", lagerConfig)
 }
 
 func parseVcapServices(logger lager.Logger, os osshim.Os) {

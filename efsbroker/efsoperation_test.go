@@ -134,7 +134,7 @@ var _ = Describe("Operation", func() {
 				BeforeEach(func() {
 					count := 0
 					fakeEFSService.DescribeFileSystemsStub = func(*efs.DescribeFileSystemsInput) (*efs.DescribeFileSystemsOutput, error) {
-						if count == 0 {
+						if count < 2 {
 							count++
 							return &efs.DescribeFileSystemsOutput{
 								FileSystems: []*efs.FileSystemDescription{{
@@ -155,7 +155,11 @@ var _ = Describe("Operation", func() {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateAvailable))
 					Expect(operationState.Err).To(BeNil())
-					Expect(fakeEFSService.DescribeFileSystemsCallCount()).To(Equal(2))
+					Expect(fakeEFSService.DescribeFileSystemsCallCount()).To(Equal(3))
+				})
+				It("should sleep with exponential backoff", func() {
+					Expect(fakeClock.SleepCallCount()).To(Equal(2))
+					Expect(fakeClock.SleepArgsForCall(1)).To(Equal(fakeClock.SleepArgsForCall(0) * 2))
 				})
 			})
 			Context("when amazon's describe file system returns an unexpected state", func() {

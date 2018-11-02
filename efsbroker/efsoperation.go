@@ -21,7 +21,7 @@ import (
 //go:generate counterfeiter -o efsfakes/fake_operation.go . Operation
 
 const (
-	PollingInterval = 5 * time.Second
+	PollingInterval = time.Second
 )
 
 type Operation interface {
@@ -189,7 +189,7 @@ func (o *ProvisionOperationStateMachine) CheckFs() error {
 	defer logger.Info("end")
 	defer o.updateCb(o.state)
 
-	for true {
+	for sleepTime := PollingInterval; true; sleepTime = sleepTime * 2 {
 		output, err := o.efsService.DescribeFileSystems(&efs.DescribeFileSystemsInput{
 			FileSystemId: aws.String(o.state.FsID),
 		})
@@ -218,7 +218,7 @@ func (o *ProvisionOperationStateMachine) CheckFs() error {
 		case efs.LifeCycleStateAvailable:
 			return nil
 		case efs.LifeCycleStateCreating:
-			o.clock.Sleep(PollingInterval)
+			o.clock.Sleep(sleepTime)
 		default:
 			o.state.Err = NewOperationStateErr("Unexpected lifecycle state. Expected creating or available. Got %s", o.state.FsState)
 			return o.state.Err
@@ -258,7 +258,7 @@ func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 	defer logger.Info("end")
 	defer o.updateCb(o.state)
 
-	for true {
+	for sleepTime := PollingInterval; true; sleepTime = sleepTime * 2 {
 		mtOutput, err := o.efsService.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 			FileSystemId: aws.String(o.state.FsID),
 		})
@@ -300,7 +300,7 @@ func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 				}
 				continue
 			case efs.LifeCycleStateCreating:
-				o.clock.Sleep(PollingInterval)
+				o.clock.Sleep(sleepTime)
 				working = true
 				break
 			default:
@@ -445,7 +445,7 @@ func (o *DeprovisionOperation) CheckMountTarget(fsID string) error {
 	logger.Info("start")
 	defer logger.Info("end")
 
-	for true {
+	for sleepTime := PollingInterval; true; sleepTime = sleepTime * 2 {
 		mtOutput, err := o.efs.DescribeMountTargets(&efs.DescribeMountTargetsInput{
 			FileSystemId: aws.String(fsID),
 		})
@@ -473,7 +473,7 @@ func (o *DeprovisionOperation) CheckMountTarget(fsID string) error {
 			logger.Error("err-at-amazon", err)
 			return err
 		}
-		o.clock.Sleep(PollingInterval)
+		o.clock.Sleep(sleepTime)
 	}
 	return nil
 }
@@ -497,7 +497,7 @@ func (o *DeprovisionOperation) CheckFs(fsID string) error {
 	logger.Info("start")
 	defer logger.Info("end")
 
-	for true {
+	for sleepTime := PollingInterval; true; sleepTime = sleepTime * 2 {
 		output, err := o.efs.DescribeFileSystems(&efs.DescribeFileSystemsInput{
 			FileSystemId: aws.String(fsID),
 		})
@@ -519,7 +519,7 @@ func (o *DeprovisionOperation) CheckFs(fsID string) error {
 		if *output.FileSystems[0].LifeCycleState == efs.LifeCycleStateDeleted {
 			return nil
 		}
-		o.clock.Sleep(PollingInterval)
+		o.clock.Sleep(sleepTime)
 	}
 	return nil
 }

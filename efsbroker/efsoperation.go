@@ -194,6 +194,12 @@ func (o *ProvisionOperationStateMachine) CheckFs() error {
 			FileSystemId: aws.String(o.state.FsID),
 		})
 		if err != nil {
+			if isThrottlingException(err) {
+				logger.Info("aws-throttling-exception-retrying")
+				o.clock.Sleep(sleepTime)
+				continue
+			}
+
 			o.state.Err = WrapOperationStateErr(err)
 			logger.Error("err-getting-fs-status", o.state.Err)
 			//o.nextState = o.Finish
@@ -263,6 +269,12 @@ func (o *ProvisionOperationStateMachine) CheckMountTargets() error {
 			FileSystemId: aws.String(o.state.FsID),
 		})
 		if err != nil {
+			if isThrottlingException(err) {
+				logger.Info("aws-throttling-exception-retrying")
+				o.clock.Sleep(sleepTime)
+				continue
+			}
+
 			o.state.Err = WrapOperationStateErr(err)
 			logger.Error("err-getting-mount-target-status", o.state.Err)
 			return o.state.Err
@@ -450,6 +462,12 @@ func (o *DeprovisionOperation) CheckMountTarget(fsID string) error {
 			FileSystemId: aws.String(fsID),
 		})
 		if err != nil {
+			if isThrottlingException(err) {
+				logger.Info("aws-throttling-exception-retrying")
+				o.clock.Sleep(sleepTime)
+				continue
+			}
+
 			logger.Error("err-getting-mount-target-status", err)
 			return err
 		}
@@ -505,6 +523,12 @@ func (o *DeprovisionOperation) CheckFs(fsID string) error {
 			if strings.Contains(err.Error(), "does not exist") {
 				return nil
 			} else {
+				if isThrottlingException(err) {
+					logger.Info("aws-throttling-exception-retrying")
+					o.clock.Sleep(sleepTime)
+					continue
+				}
+
 				logger.Error("err-getting-fs-status", err)
 				return err
 			}
@@ -522,4 +546,8 @@ func (o *DeprovisionOperation) CheckFs(fsID string) error {
 		o.clock.Sleep(sleepTime)
 	}
 	return nil
+}
+
+func isThrottlingException(err error) bool {
+	return strings.Contains(err.Error(), "ThrottlingException")
 }

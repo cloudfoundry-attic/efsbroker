@@ -162,6 +162,33 @@ var _ = Describe("Operation", func() {
 					Expect(fakeClock.SleepArgsForCall(1)).To(Equal(fakeClock.SleepArgsForCall(0) * 2))
 				})
 			})
+			Context("when amazon's describe file system returns a throttling exception", func() {
+				BeforeEach(func() {
+					count := 0
+					fakeEFSService.DescribeFileSystemsStub = func(*efs.DescribeFileSystemsInput) (*efs.DescribeFileSystemsOutput, error) {
+						if count < 2 {
+							count++
+							return nil, errors.New("ThrottlingException: Rate exceeded\n\tstatus code: 400, request id: badcab")
+						}
+						return &efs.DescribeFileSystemsOutput{
+							FileSystems: []*efs.FileSystemDescription{{
+								FileSystemId:   filesystemID,
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}},
+						}, nil
+					}
+				})
+				It("should sleep and try again", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(operationState.FsState).To(ContainSubstring(efs.LifeCycleStateAvailable))
+					Expect(operationState.Err).To(BeNil())
+					Expect(fakeEFSService.DescribeFileSystemsCallCount()).To(Equal(3))
+				})
+				It("should sleep with exponential backoff", func() {
+					Expect(fakeClock.SleepCallCount()).To(Equal(2))
+					Expect(fakeClock.SleepArgsForCall(1)).To(Equal(fakeClock.SleepArgsForCall(0) * 2))
+				})
+			})
 			Context("when amazon's describe file system returns an unexpected state", func() {
 				BeforeEach(func() {
 					fakeEFSService.DescribeFileSystemsReturns(&efs.DescribeFileSystemsOutput{
@@ -338,6 +365,28 @@ var _ = Describe("Operation", func() {
 									LifeCycleState: aws.String(efs.LifeCycleStateCreating),
 								}},
 							}, nil
+						}
+						return &efs.DescribeMountTargetsOutput{
+							MountTargets: []*efs.MountTargetDescription{{
+								MountTargetId:  aws.String("fake-mt-id"),
+								LifeCycleState: aws.String(efs.LifeCycleStateAvailable),
+							}},
+						}, nil
+					}
+				})
+				It("should succeed", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(operationState.MountTargetStates[0]).To(Equal(efs.LifeCycleStateAvailable))
+					Expect(fakeEFSService.DescribeMountTargetsCallCount()).To(Equal(2))
+				})
+			})
+			Context("when amazon's describe mount target returns throttling exception then available", func() {
+				BeforeEach(func() {
+					count := 0
+					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
+						if count == 0 {
+							count++
+							return nil, errors.New("ThrottlingException: Rate exceeded\n\tstatus code: 400, request id: 0afb00")
 						}
 						return &efs.DescribeMountTargetsOutput{
 							MountTargets: []*efs.MountTargetDescription{{
@@ -746,6 +795,26 @@ var _ = Describe("Operation", func() {
 					Expect(fakeClock.SleepCallCount()).To(Equal(1))
 				})
 			})
+			Context("when amazon's describe mount target returns a throttling exception", func() {
+				BeforeEach(func() {
+					count := 0
+					fakeEFSService.DescribeMountTargetsStub = func(*efs.DescribeMountTargetsInput) (*efs.DescribeMountTargetsOutput, error) {
+						if count == 0 {
+							count++
+							return nil, errors.New("ThrottlingException: Rate exceeded\n\tstatus code: 400, request id: d00fad00f")
+						}
+						return &efs.DescribeMountTargetsOutput{
+							MountTargets: []*efs.MountTargetDescription{{
+								MountTargetId:  aws.String("fake-mt-id"),
+								LifeCycleState: aws.String(efs.LifeCycleStateDeleted),
+							}},
+						}, nil
+					}
+				})
+				It("should remain in the check mount target state", func() {
+					Expect(fakeClock.SleepCallCount()).To(Equal(1))
+				})
+			})
 			Context("when there are multiple mount points and not all are deleted", func() {
 				BeforeEach(func() {
 					spec = efsbroker.DeprovisionOperationSpec{
@@ -831,6 +900,27 @@ var _ = Describe("Operation", func() {
 				})
 				It("should succeed", func() {
 					Expect(err).To(BeNil())
+				})
+			})
+
+			Context("when amazon's describe file system returns a throttling exception", func() {
+				BeforeEach(func() {
+					count := 0
+					fakeEFSService.DescribeFileSystemsStub = func(*efs.DescribeFileSystemsInput) (*efs.DescribeFileSystemsOutput, error) {
+						if count < 2 {
+							count++
+							return nil, errors.New("ThrottlingException: Rate exceeded\n\tstatus code: 400, request id: d00d00")
+						}
+						return nil, errors.New("fake-fs-id does not exist")
+					}
+				})
+				It("should sleep and try again", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(fakeEFSService.DescribeFileSystemsCallCount()).To(Equal(3))
+				})
+				It("should sleep with exponential backoff", func() {
+					Expect(fakeClock.SleepCallCount()).To(Equal(2))
+					Expect(fakeClock.SleepArgsForCall(1)).To(Equal(fakeClock.SleepArgsForCall(0) * 2))
 				})
 			})
 

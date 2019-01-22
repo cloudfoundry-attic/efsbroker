@@ -167,11 +167,11 @@ func (b *Broker) Provision(context context.Context, instanceID string, details b
 	efsInstance := EFSInstance{details, "", "", "", "", false, "", []string{}, []string{}, []string{}, []string{}, nil}
 
 	instanceDetails := brokerstore.ServiceInstance{
-		details.ServiceID,
-		details.PlanID,
-		details.OrganizationGUID,
-		details.SpaceGUID,
-		efsInstance,
+		ServiceID:          details.ServiceID,
+		PlanID:             details.PlanID,
+		OrganizationGUID:   details.OrganizationGUID,
+		SpaceGUID:          details.SpaceGUID,
+		ServiceFingerPrint: efsInstance,
 	}
 
 	if b.instanceConflicts(instanceDetails, instanceID) {

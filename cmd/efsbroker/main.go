@@ -135,8 +135,8 @@ func main() {
 
 	if dbgAddr := debugserver.DebugAddress(flag.CommandLine); dbgAddr != "" {
 		server = utils.ProcessRunnerFor(grouper.Members{
-			{"debug-server", debugserver.Runner(dbgAddr, logTap)},
-			{"broker-api", server},
+			{Name: "debug-server", Runner: debugserver.Runner(dbgAddr, logTap)},
+			{Name: "broker-api", Runner: server},
 		})
 	}
 
@@ -223,7 +223,7 @@ func parseSubnets() []efsbroker.Subnet {
 
 	ret := []efsbroker.Subnet{}
 	for i, s := range subnetIDs {
-		ret = append(ret, efsbroker.Subnet{s, AZs[i], securityGroups[i]})
+		ret = append(ret, efsbroker.Subnet{ID: s, AZ: AZs[i], SecurityGroup: securityGroups[i]})
 	}
 	return ret
 }

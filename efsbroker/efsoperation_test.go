@@ -93,7 +93,7 @@ var _ = Describe("Operation", func() {
 				brokerapi.ProvisionDetails{PlanID: "planId"},
 				fakeEFSService,
 				fakeVolTools,
-				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+				[]efsbroker.Subnet{{ID: "fake-subnet-id", AZ: "fake-az", SecurityGroup: "fake-security-group"}},
 				fakeClock,
 				update)
 			filesystemID = aws.String("fake-fs-id")
@@ -425,8 +425,8 @@ var _ = Describe("Operation", func() {
 						fakeEFSService,
 						fakeVolTools,
 						[]efsbroker.Subnet{
-							{"fake-subnet-id", "fake-az", "fake-security-group"},
-							{"fake-subnet-id-2", "fake-az-2", "fake-security-group-2"},
+							{ID: "fake-subnet-id", AZ: "fake-az", SecurityGroup: "fake-security-group"},
+							{ID: "fake-subnet-id-2", AZ: "fake-az-2", SecurityGroup: "fake-security-group-2"},
 						},
 						fakeClock,
 						update)

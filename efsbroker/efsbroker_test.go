@@ -97,7 +97,7 @@ var _ = Describe("Broker", func() {
 				fakeClock,
 				fakeStore,
 				fakeEFSService,
-				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+				[]efsbroker.Subnet{{ID: "fake-subnet-id", AZ: "fake-az", SecurityGroup: "fake-security-group"}},
 				fakeVolTools,
 				func(lager.Logger, string, brokerapi.ProvisionDetails, efsbroker.EFSService, efsvoltools.VolTools, []efsbroker.Subnet, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
 					return fakeProvisionOperation
@@ -745,7 +745,7 @@ var _ = Describe("Broker", func() {
 				fakeClock,
 				fakeStore,
 				fakeEFSService,
-				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+				[]efsbroker.Subnet{{ID: "fake-subnet-id", AZ: "fake-az", SecurityGroup: "fake-security-group"}},
 				fakeVolTools,
 				func(lager.Logger, string, brokerapi.ProvisionDetails, efsbroker.EFSService, efsvoltools.VolTools, []efsbroker.Subnet, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
 					return fakeProvisionOperation
@@ -767,7 +767,7 @@ var _ = Describe("Broker", func() {
 				fakeClock,
 				fakeStore,
 				fakeEFSService,
-				[]efsbroker.Subnet{{"fake-subnet-id", "fake-az", "fake-security-group"}},
+				[]efsbroker.Subnet{{ID: "fake-subnet-id", AZ: "fake-az", SecurityGroup: "fake-security-group"}},
 				fakeVolTools,
 				func(lager.Logger, string, brokerapi.ProvisionDetails, efsbroker.EFSService, efsvoltools.VolTools, []efsbroker.Subnet, efsbroker.Clock, func(*efsbroker.OperationState)) efsbroker.Operation {
 					return fakeProvisionOperation
